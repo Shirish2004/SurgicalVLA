@@ -1,0 +1,225 @@
+"""CLI entry point: python train.py --config train.yaml --repo_id <repo> [model.chunk_size=25 ...]"""
+
+import argparse
+import dataclasses
+import os
+import re
+import warnings
+
+import yaml
+
+from lerobot.configs import FeatureType
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+
+from surgicalvla.data.dataset import build_dataset, infer_features, resolve_camera_map
+from surgicalvla.utils.splits import load_split, save_split, split_episodes
+from surgicalvla.modules.policy import SurgicalVLAConfig, SurgicalVLAPolicy
+from surgicalvla.training.trainer import Trainer
+
+# yaml key -> SurgicalVLAConfig field, for names that don't match 1:1
+MOE_ALIASES = {
+    "moe_load_balance_weight": "skill_loss_coef",
+    "moe_router_z_loss_weight": "moe_z_coef",
+    "moe_top_k": "moe_max_k",
+}
+
+
+def _parse_dotlist(pairs: list[str]) -> dict:
+    overrides = {}
+    for pair in pairs:
+        key, _, raw = pair.partition("=")
+        node = overrides
+        *path, leaf = key.split(".")
+        for part in path:
+            node = node.setdefault(part, {})
+        node[leaf] = yaml.safe_load(raw)
+    return overrides
+
+
+def _merge(base: dict, patch: dict) -> dict:
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _merge(base[k], v)
+        else:
+            base[k] = v
+    return base
+
+
+def build_config(cfg: dict) -> SurgicalVLAConfig:
+    valid_fields = {f.name for f in dataclasses.fields(SurgicalVLAConfig)}
+    kwargs = {}
+    for k, v in cfg.get("model", {}).items():
+        if k in valid_fields:
+            kwargs[k] = v
+        else:
+            warnings.warn(f"Unknown model config key '{k}', ignored.")
+    for raw_key, v in cfg.get("moe", {}).items():
+        k = MOE_ALIASES.get(raw_key, raw_key)
+        if k in valid_fields:
+            kwargs[k] = v
+        else:
+            warnings.warn(f"Unknown moe config key '{raw_key}', ignored.")
+    if "gripper_dims" not in kwargs and "gripper_dims" in cfg.get("run", {}):
+        kwargs["gripper_dims"] = cfg["run"]["gripper_dims"]
+    return SurgicalVLAConfig(**kwargs)
+
+
+def resolve_features(config: SurgicalVLAConfig, repo_id: str, camera_map: dict | None, root: str | None = None):
+    """Fills config.input_features/output_features from the dataset if not already set (e.g. by a
+    pretrained checkpoint), renaming dataset camera keys to the config's expected names first."""
+    meta = LeRobotDatasetMetadata(repo_id, root=root)
+    key_map = resolve_camera_map(meta, camera_map)
+    if config.input_features:
+        return  # pretrained/resumed config already defines the expected feature names
+    features = {key_map.get(k, k): v for k, v in infer_features(meta).items()}
+    config.input_features = {k: v for k, v in features.items() if v.type != FeatureType.ACTION}
+    config.output_features = {k: v for k, v in features.items() if v.type == FeatureType.ACTION}
+
+
+def resolve_resume_dir(resume_arg: str | bool | None, output_dir: str) -> str | None:
+    if not resume_arg:
+        return None
+    if isinstance(resume_arg, str) and os.path.isdir(resume_arg):
+        return resume_arg
+    
+    ckpt_base = os.path.join(output_dir, "checkpoints") if os.path.exists(os.path.join(output_dir, "checkpoints")) else output_dir
+    if os.path.isdir(ckpt_base):
+        steps = []
+        for name in os.listdir(ckpt_base):
+            p = os.path.join(ckpt_base, name)
+            if os.path.isdir(p):
+                m = re.search(r"step_(\d+)$", name)
+                if m:
+                    steps.append((int(m.group(1)), p))
+        if steps:
+            steps.sort(key=lambda x: x[0])
+            return steps[-1][1]
+    return resume_arg if isinstance(resume_arg, str) else None
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--repo_id", required=True, help="dataset identifier (any string for local-only data)")
+    parser.add_argument("--root", default=None, help="local dataset root, e.g. a lerobot dataset directory on disk")
+    parser.add_argument("--pretrained", default=None, help="pretrained SurgicalVLA checkpoint to finetune from")
+    parser.add_argument("--resume", default=None, help="checkpoint dir (checkpoints/step_N) or 'latest' to continue training from")
+    parser.add_argument("overrides", nargs="*", help="dotlist overrides, e.g. model.chunk_size=25")
+    args = parser.parse_args()
+
+    with open(args.config) as f:
+        cfg = yaml.safe_load(f)
+    _merge(cfg, _parse_dotlist(args.overrides))
+    ds_cfg = cfg.get("dataset", {})
+    run_cfg = cfg.get("run", {})
+    proj_cfg = cfg.get("project", {})
+    log_cfg = cfg.get("logging", {})
+    root = ds_cfg.get("root", args.root)
+    camera_map = ds_cfg.get("camera_map")
+
+    config = build_config(cfg)
+    resolve_features(config, args.repo_id, camera_map, root=root)
+
+    output_dir = run_cfg.get("ckpt_dir", "./checkpoints")
+    resume_arg = args.resume or run_cfg.get("resume")
+    pretrained = args.pretrained or run_cfg.get("pretrained")
+    
+    resume_dir = resolve_resume_dir(resume_arg, output_dir)
+    ckpt = resume_dir or pretrained
+
+    policy = SurgicalVLAPolicy.from_pretrained(ckpt, config=config) if ckpt else SurgicalVLAPolicy(config)
+
+    streaming = run_cfg.get("streaming", False)
+    val_fraction = ds_cfg.get("val_fraction", 0.01)
+    train_eps = val_eps = None
+    if streaming and val_fraction > 0:
+        warnings.warn("Streaming mode has no episode filtering; validation is disabled.")
+    elif val_fraction > 0:
+        split_path = os.path.join(output_dir, "split.json")
+        if os.path.exists(split_path):
+            train_eps, val_eps = load_split(split_path)
+        else:
+            meta = LeRobotDatasetMetadata(args.repo_id, root=root)
+            train_eps, val_eps = split_episodes(meta.total_episodes, val_fraction, ds_cfg.get("split_seed", 0))
+            save_split(split_path, train_eps, val_eps)
+
+    dataset = build_dataset(
+        args.repo_id,
+        config,
+        streaming=streaming,
+        streaming_buffer_size=run_cfg.get("streaming_buffer_size", 1000),
+        streaming_seed=run_cfg.get("streaming_seed", 42),
+        root=root,
+        episodes=train_eps,
+        camera_map=camera_map,
+    )
+    val_dataset = (
+        build_dataset(args.repo_id, config, root=root, episodes=val_eps, camera_map=camera_map) if val_eps else None
+    )
+
+    # Inspect checkpoint state for WandB run ID and dataset verification
+    wandb_run_id = None
+    if resume_dir and os.path.exists(resume_dir):
+        txt_path = os.path.join(resume_dir, "wandb_run_id.txt")
+        if os.path.exists(txt_path):
+            with open(txt_path) as f:
+                wandb_run_id = f.read().strip()
+
+        state_path = os.path.join(resume_dir, "trainer_state.pt")
+        if os.path.exists(state_path):
+            try:
+                import torch
+                st = torch.load(state_path, map_location="cpu", weights_only=False)
+                if not wandb_run_id and st.get("wandb_run_id"):
+                    wandb_run_id = st.get("wandb_run_id")
+                saved_repo_id = st.get("repo_id")
+                if saved_repo_id and saved_repo_id != args.repo_id:
+                    warnings.warn(
+                        f"Resume checkpoint was trained on dataset '{saved_repo_id}', but current dataset is '{args.repo_id}'."
+                    )
+            except Exception as e:
+                warnings.warn(f"Could not inspect checkpoint state: {e}")
+
+    wandb_mode = proj_cfg.get("wandb_mode", "disabled")
+    logger_kwargs = dict(
+        use_wandb=wandb_mode != "disabled",
+        project=proj_cfg.get("wandb_project", "surgicalvla"),
+    )
+    if wandb_run_id:
+        logger_kwargs["id"] = wandb_run_id
+        logger_kwargs["resume"] = proj_cfg.get("wandb_resume", "allow")
+
+    for k in ["entity", "run_name", "tags", "notes", "mode", "group", "job_type", "dir", "id", "resume"]:
+        if k in proj_cfg and k not in logger_kwargs:
+            logger_kwargs[k] = proj_cfg[k]
+    for k in ["entity", "run_name", "tags", "notes", "mode"]:
+        if k in log_cfg and k not in logger_kwargs:
+            logger_kwargs[k] = log_cfg[k]
+
+    trainer = Trainer(
+        policy,
+        dataset,
+        output_dir=output_dir,
+        batch_size=run_cfg.get("batch_size", 32),
+        steps=run_cfg.get("steps", 100_000),
+        log_every=proj_cfg.get("log_every", 50),
+        eval_every=proj_cfg.get("val_every", 2_000),
+        save_every=proj_cfg.get("save_every", 2_000),
+        device=run_cfg.get("device", "cuda"),
+        visual_every=log_cfg.get("log_every_n_steps"),
+        visual_logging=log_cfg.get("enable_visual_logging", True),
+        logger_kwargs=logger_kwargs,
+        rebase_skills=bool(pretrained) and not resume_dir,
+        use_amp=run_cfg.get("amp", True),
+        val_dataset=val_dataset,
+        val_samples=run_cfg.get("val_samples", 640),
+        ema_decay=run_cfg.get("ema_decay", 0.999),
+        resume_from=resume_dir,
+        grad_accum=run_cfg.get("grad_accum", 4),
+        repo_id=args.repo_id,
+    )
+    trainer.fit()
+
+
+if __name__ == "__main__":
+    main()

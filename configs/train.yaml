@@ -1,0 +1,70 @@
+project:
+  wandb_project: "surgical-vla"      # W&B entity/project grouping for runs
+  wandb_mode: "online"                # "online" | "offline" | "disabled"; "disabled" skips W&B entirely
+  entity: "building-text"            # optional W&B entity; null -> default account
+  run_name: "surgical_vla"           # base name; stage suffix is appended
+  notes: "MoE surgical VLA (SmolVLA backbone)"
+  tags: []
+  log_every: 20                     # log scalar metrics every N steps
+  val_every: 200                     # run validation preview every N steps
+  save_every: 2000                   # save model checkpoint every N steps
+
+run:
+  steps: 50000                       # total training steps
+  batch_size: 24
+  device: "cuda"                     # "cuda" or "cpu"
+  ckpt_dir: "./checkpoints"
+  streaming: false                   # true -> pull frames from the Hub on demand
+  streaming_buffer_size: 1000        # shuffle-buffer size, in frames, when streaming
+  streaming_seed: 42                 # seed for the streaming shuffle buffer
+  grad_accum: 4                      # accumulate gradients over N steps before optimizer step
+  
+
+# info.json: robot_type=aloha, codebase_version=v3.0 (genuine v3 layout: multi-episode
+# parquet/video files, file_index chunking) -- the v3.0 assumptions in dataset.py apply
+# directly here. 27500 episodes / 6.07M frames / 23559 tasks, bimanual 14-DoF state+action
+# (matches model.adapt_to_pi_aloha=true's motor-index flipping exactly), 3 cameras, fps=30.
+dataset:
+  root: "/media/protomate/Seagate/shirish/robotwin_data/"      # set to null (or drop this line) to stream from the Hub by repo_id instead
+  camera_map:
+    observation.images.cam_high: observation.images.top
+    observation.images.cam_left_wrist: observation.images.left_wrist
+    observation.images.cam_right_wrist: observation.images.right_wrist
+
+# Model / architecture (fields passed straight to SurgicalVLAConfig)
+# NOTE: action dim is derived from the dataset's action feature (max_action_dim),
+# not from a config field -- so there is deliberately no num_actions/hidden_size/
+# max_action_seq key here. Camera keys/counts are also derived from the dataset
+# (see dataset.camera_map above), not listed here.
+model:
+  vlm_model_name: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+  chunk_size: 50
+  n_action_steps: 25
+  n_obs_steps: 1                 
+  freeze_vision_encoder: true
+  attention_mode: "cross_attn"
+  num_vlm_layers: 16
+  expert_width_multiplier: 0.75
+  load_vlm_weights: true
+  adapt_to_pi_aloha: false            # when in pretraining stage with aloha setup
+  add_image_special_tokens: true
+  train_expert_only: true
+  num_experts: 5
+  gripper_dims: [6, 13]              # dual arm piper setup [6] if single arm piper setup
+  scheduler_decay_steps : 50000
+# MoE action expert (keys here are SurgicalVLAConfig field names).
+moe:
+  moe_every_n_layers: 2
+  moe_expert_ratio: 0.25
+  moe_max_k: 2
+  moe_top_p: 0.7
+  skill_loss_coef: 0.1
+  moe_z_coef: 1.0e-3
+  skill_freeze_steps: 20000
+
+# Visual panels / CSV / routing-drift plots
+logging:
+  enable_visual_logging: true
+  log_dir: "logs"
+  log_every_n_steps: 200             # write panels + CSV row every N steps
+  max_log_panels: 50                 # rolling cap per camera -- not yet enforced in logging.py

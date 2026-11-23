@@ -1,10 +1,5 @@
-"""Training loops, losses, and trainer utilities for SurgicalVLA policies."""
+"""Training loop and batch helpers."""
 
-from .trainer import Trainer, add_language_tokens, _collapse_obs_history, _tokenizer
+from surgicalvla.training.trainer import Trainer, add_language_tokens, collapse_obs_history
 
-__all__ = [
-    "Trainer",
-    "_collapse_obs_history",
-    "_tokenizer",
-    "add_language_tokens",
-]
+__all__ = ["Trainer", "add_language_tokens", "collapse_obs_history"]

@@ -137,8 +137,8 @@ def check_forward(policy, batch: dict):
     if hasattr(policy, "expert_usage"):
         usage = policy.expert_usage()
         for layer_idx, counts in usage.items():
-            print(f"route usage (sum of expert weights over batch): {counts.tolist()}")
-        for k in ("skill_ce", "skill_acc", "route_entropy", "moe_z"):
+            print(f"layer {layer_idx} expert usage: {[round(c, 4) for c in counts.tolist()]}")
+        for k in ("skill_ce", "skill_acc", "route_entropy", "moe_z", "moe_load_balance"):
             print(f"  {k}: {loss_dict.get(k)}")
         sk = policy.model.skills
         print(f"skill clusters initialized={bool(sk.initialized)} frozen={bool(sk.frozen)} usage={sk.usage.tolist()}")

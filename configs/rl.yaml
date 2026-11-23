@@ -1,0 +1,79 @@
+# Online RL (GRPO-style group-advantage weighting) on top of a pretrained checkpoint.
+#
+#   pixi run python scripts/train_rl.py --config configs/rl.yaml
+#   pixi run python scripts/train_rl.py --config configs/rl.yaml run.lr=3e-6 rl.group_size=4
+#   pixi run tensorboard --logdir runs/rl/logs
+#
+# The simulator runs in the separate `libero` pixi env; scripts/train_rl.py
+# spawns it and talks over a loopback socket. See README "Online RL".
+
+project:
+  wandb_project: "surgical-vla"
+  wandb_mode: "disabled"        # "online" | "offline" | "disabled"
+  entity: null
+  run_name: "surgical_vla_rl"
+  notes: "GRPO-style group-advantage RL on LIBERO"
+  tags: ["rl", "libero"]
+
+# Starting policy. Must be a directory written by `policy.save_pretrained`
+# (config.json + model.safetensors); the processor pipelines are rebuilt here
+# from `stats`, because checkpoints do not carry dataset statistics.
+checkpoint: "checkpoints/checkpoints/step_2000"
+
+stats:
+  # Dataset root, its meta/ directory, or a stats.json file. Only
+  # `observation.state` and `action` are used (14-D each, matching the
+  # checkpoint); the image statistics are identity-mapped in SmolVLA.
+  path: "/media/protomate/Seagate/shirish/robotwin_data/"
+
+libero:
+  suite: "libero_10"            # libero_spatial | libero_object | libero_goal | libero_10 | libero_90
+  tasks: null                   # null -> every task in the suite; else a list of exact task names
+  val_tasks: null               # null -> the first `rl.max_val_tasks` train tasks
+  # Dataset camera key -> LIBERO camera. The checkpoint expects three cameras;
+  # LIBERO provides two, so the right wrist duplicates the agent view. That is a
+  # real limitation, not a placeholder: predict_action_chunk still gets the
+  # right feature shapes, but the duplicate carries no new information.
+  camera_map:
+    observation.images.cam_high: agentview
+    observation.images.cam_left_wrist: eye_in_hand
+    observation.images.cam_right_wrist: agentview
+  camera_height: 128
+  camera_width: 128
+  # The checkpoint is 14-D (7 per arm); LIBERO OSC_POSE is 7-D (one arm).
+  # `action_slice` takes the first arm and `social`/second-arm dims are dropped.
+  action_slice: [0, 7]
+  action_scale: 1.0             # multiply the normalized-then-unnormalized action before sending
+  # LIBERO's +1 closes the gripper; `proprio_state` reports openness, so sending
+  # -1 opens. Measured on libero_10/libero_spatial, not assumed.
+  gripper_sign: -1.0
+  env_gripper_dims: [6]         # index of the gripper inside the sliced 7-D action
+  n_exec_steps: 25              # open-loop steps executed per predicted chunk (chunk is 50)
+  max_steps: 500                # simulator steps per episode
+  max_decisions: 20             # hard cap on chunks per episode (= max_steps / n_exec_steps)
+  frame_every: 5                # record a validation frame every N steps
+  max_cached_envs: 8            # LRU cache of instantiated LIBERO envs on the server side
+
+rl:
+  group_size: 8                 # episodes per update; each episode = one group member
+  efficiency_bonus: 0.0         # >0 rewards finishing early (successful episodes only)
+  adv_normalize: "rloo"         # "rloo" (default) | "std"; see src/surgicalvla/rl/grpo.py
+  adv_clip: 5.0
+  # 0 disables the one-sided flow-loss-gap penalty. Enabling it holds a frozen
+  # copy of the policy in memory (a second full model on the GPU).
+  kl_coef: 0.0
+  val_seed: 1234                # fixed, so validation episodes are comparable across iterations
+  max_val_tasks: 4
+  val_frames_per_task: 4
+
+run:
+  iters: 200                    # update iterations (1 group rollout + 1 weighted step each)
+  lr: 1.0e-5                    # low: this is fine-tuning an already-trained checkpoint
+  micro_batch: 8                # chunks per forward/backward; group objective is preserved
+  device: "cuda"
+  val_every: 10
+  save_every: 25
+  log_every: 1
+  out_dir: "runs/rl"
+  seed: 0
+  resume: null                  # true -> load runs/rl/rl_state.pt optimizer state

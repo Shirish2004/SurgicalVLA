@@ -37,6 +37,7 @@ dataset:
 # max_action_seq key here. Camera keys/counts are also derived from the dataset
 # (see dataset.camera_map above), not listed here.
 model:
+  policy_type: "surgical"            # "surgical" (skill-routed) | "smolvla_moe" (object-6D + CoT + phase MoE)
   vlm_model_name: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
   chunk_size: 50
   n_action_steps: 25
@@ -58,9 +59,28 @@ moe:
   moe_expert_ratio: 0.25
   moe_max_k: 2
   moe_top_p: 0.7
+  moe_prior_bias: 1.0
+  moe_load_balance_coef: 0.01
   skill_loss_coef: 0.1
   moe_z_coef: 1.0e-3
   skill_freeze_steps: 20000
+
+# Only read when model.policy_type == "smolvla_moe" (SmolVLAMoEConfig fields).
+smolvla_moe:
+  num_object_tokens: 4
+  num_objects: 2                  # 1 for single-arm, 2 for bimanual handover
+  obj_tracker_mode: "passthrough" # passthrough | cached | mock | live
+  use_cot: true
+  cot_max_tokens: 48
+  cot_refresh_interval: 10
+  num_experts: 4
+  num_shared_experts: 1
+  moe_top_k: 2
+  moe_aux_loss_weight: 0.01
+  phase_loss_weight: 0.1
+  pose_aux_loss_weight: 0.2
+  expert_cross_attn_vlm_layers: -1  # -1 -> num_vlm_layers//2, 0 -> all
+  use_reinflow: false
 
 # Visual panels / CSV / routing-drift plots
 logging:

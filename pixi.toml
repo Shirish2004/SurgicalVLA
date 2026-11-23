@@ -1,0 +1,69 @@
+[workspace]
+name = "surgicalvla"
+version = "0.2.0"
+description = "Skill-routed Mixture-of-Experts VLA for robotic surgery (LeRobot SmolVLA backbone)"
+authors = ["Shirish"]
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+# default/dev/asr use Python 3.13 and the main feature.
+# libero is an isolated Python 3.10 simulator environment.
+[environments]
+default = { features = ["py313", "main"], solve-group = "main" }
+dev = { features = ["py313", "main", "dev"], solve-group = "main" }
+asr = { features = ["py313", "main", "asr"], solve-group = "main" }
+libero = { features = ["py310", "libero"], solve-group = "libero", no-default-feature = true }
+
+[feature.py313.dependencies]
+python = "3.13.*"
+pip = "*"
+
+[feature.py310.dependencies]
+python = "3.10.*"
+pip = "*"
+pyyaml = "*"
+
+# Install this project with its main runtime extra.
+[feature.main.pypi-dependencies]
+surgicalvla = { path = ".", editable = true, extras = ["main"] }
+
+# Assumes sibling checkouts:
+# parent/
+#   SurgicalVLA/  (this project)
+#   lerobot/      (LeRobot source checkout)
+# Only the extras this project actually imports. `all` pulls in simulation envs
+# (dm-control -> labmaze), whose Python 3.13 sdist build shells out to Bazel and
+# fails on labmaze's undeclared @bazel_skylib dependency. The other envs don't
+# need those packages, so don't resolve/build them here.
+lerobot = { path = "./lerobot", editable = true, extras = ["dataset", "smolvla"] }
+
+[feature.dev.pypi-dependencies]
+pytest = ">=8.0"
+ruff = ">=0.6"
+
+[feature.asr.pypi-dependencies]
+faster-whisper = ">=1.2.1"
+noisereduce = ">=3.0.3"
+sounddevice = ">=0.5.6"
+
+# LIBERO simulator dependencies: no LeRobot or Python >=3.12 packages here.
+[feature.libero.pypi-dependencies]
+numpy = "==1.22.4"
+mujoco = "==2.3.7"
+numba = "==0.57.1"
+scipy = ">=1.9,<1.12"
+pillow = "*"
+termcolor = "*"
+robosuite = ">=1.4.0"
+bddl = "==1.0.1"
+gym = "==0.25.2"
+easydict = "==1.9"
+hydra-core = "==1.2.0"
+matplotlib = "==3.5.3"
+cloudpickle = "==2.1.0"
+future = "==0.18.2"
+opencv-python = "==4.6.0.66"
+
+[feature.libero.activation.env]
+PYTHONNOUSERSITE = "1"
+PYTHONPATH = ""

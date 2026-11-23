@@ -1,0 +1,62 @@
+# ReinFlow-GRPO: online SDE-policy optimisation on LIBERO.
+#
+#   pixi run python scripts/train_reinflow_grpo.py --config configs/reinflow_grpo.yaml
+#   pixi run python scripts/train_reinflow_grpo.py --config configs/reinflow_grpo.yaml run.lr=3e-6 rl.group_size=4
+
+project:
+  wandb_project: "surgical-vla"
+  wandb_mode: "disabled"
+  entity: null
+  run_name: "surgical_vla_reinflow_grpo"
+  notes: "ReinFlow-GRPO over flow-matching SDE trajectories"
+  tags: ["rl", "grpo", "reinflow", "libero"]
+
+checkpoint: "checkpoints/checkpoints/step_2000"
+
+stats:
+  path: "/media/protomate/Seagate/shirish/robotwin_data/"
+
+libero:
+  suite: "libero_10"
+  tasks: null
+  val_tasks: null
+  camera_map:
+    observation.images.cam_high: agentview
+    observation.images.cam_left_wrist: eye_in_hand
+    observation.images.cam_right_wrist: agentview
+  camera_height: 128
+  camera_width: 128
+  action_slice: [0, 7]
+  action_scale: 1.0
+  gripper_sign: -1.0
+  env_gripper_dims: [6]
+  n_exec_steps: 25
+  max_steps: 500
+  max_decisions: 20
+  frame_every: 5
+  max_cached_envs: 8
+
+rl:
+  group_size: 8                 # G rollouts per initial state / task
+  sde_steps: 5                  # ReinFlow Euler-Maruyama steps per chunk
+  adv_eps: 1.0e-8
+  clip: 0.2                     # PPO-style ratio clip
+  kl_coef: 0.01                 # k3 KL against the frozen SFT reference
+  entropy_coef: 0.001           # entropy bonus on the ReinFlow noise head
+  success_reward: 1.0
+  position_weight: 0.3
+  orientation_weight: 0.3
+  target_pose_6d: null          # optional [x, y, z, r1..r6] handover target
+  val_seed: 1234
+  max_val_tasks: 4
+  val_frames_per_task: 4
+
+run:
+  iters: 200
+  lr: 1.0e-6
+  micro_batch: 4
+  device: "cuda"
+  val_every: 10
+  save_every: 25
+  out_dir: "runs/reinflow_grpo"
+  seed: 0

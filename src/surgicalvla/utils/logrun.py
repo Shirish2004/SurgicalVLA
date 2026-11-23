@@ -9,6 +9,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+
 try:
     from torch.utils.tensorboard import SummaryWriter
 except Exception:
@@ -43,6 +44,11 @@ class ExperimentLogger:
         os.makedirs(self.fig_dir, exist_ok=True)
         self.writer = SummaryWriter(os.path.join(output_dir, "logs")) if SummaryWriter is not None else None
         self._history: dict[str, list] = {}
+        # Append-only long-format scalar log. TensorBoard/W&B are the interactive
+        # views; this file is what survives when neither is installed or a run
+        # dies mid-way, and it is what `plot_metrics` reads.
+        self.csv_path = os.path.join(output_dir, "metrics.csv")
+        self._csv_header = not os.path.exists(self.csv_path)
 
         if config is not None:
             with open(os.path.join(output_dir, "config.json"), "w") as f:
@@ -64,11 +70,18 @@ class ExperimentLogger:
                 self.wandb = None
 
     def log_scalars(self, metrics: dict, step: int):
+        rows = []
         for k, v in metrics.items():
             v = float(v)
             if self.writer is not None:
                 self.writer.add_scalar(k, v, step)
             self._history.setdefault(k, []).append((step, v))
+            rows.append(f"{int(step)},{k},{v:.10g}")
+        with open(self.csv_path, "a") as f:
+            if self._csv_header:
+                f.write("step,key,value\n")
+                self._csv_header = False
+            f.write("\n".join(rows) + "\n")
         if self.wandb:
             self.wandb.log(metrics, step=step)
 
@@ -125,7 +138,7 @@ class ExperimentLogger:
     def log_loss_curve(self, key: str = "loss"):
         if key not in self._history:
             return
-        steps, values = zip(*self._history[key])
+        steps, values = zip(*self._history[key], strict=False)
         fig, ax = plt.subplots(figsize=(5, 3))
         ax.plot(steps, values, lw=1.2)
         ax.set_xlabel("step"), ax.set_ylabel(key), ax.set_title(key)

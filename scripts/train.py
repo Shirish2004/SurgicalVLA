@@ -2,63 +2,41 @@
 
 import argparse
 import dataclasses
+import json
 import os
 import re
 import warnings
-
-import yaml
 
 from lerobot.configs import FeatureType
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 
 from surgicalvla.data.dataset import build_dataset, infer_features, resolve_camera_map
-from surgicalvla.utils.splits import load_split, save_split, split_episodes
+from surgicalvla.modules.configuration_smolvla_moe import SmolVLAMoEConfig
+from surgicalvla.modules.modeling_smolvla_moe import SmolVLAMoEPolicy
 from surgicalvla.modules.policy import SurgicalVLAConfig, SurgicalVLAPolicy
 from surgicalvla.training.trainer import Trainer
+from surgicalvla.utils.config import load_config, warn_unknown
+from surgicalvla.utils.splits import load_split, save_split, split_episodes
 
 # yaml key -> SurgicalVLAConfig field, for names that don't match 1:1
 MOE_ALIASES = {
-    "moe_load_balance_weight": "skill_loss_coef",
     "moe_router_z_loss_weight": "moe_z_coef",
     "moe_top_k": "moe_max_k",
 }
-
-
-def _parse_dotlist(pairs: list[str]) -> dict:
-    overrides = {}
-    for pair in pairs:
-        key, _, raw = pair.partition("=")
-        node = overrides
-        *path, leaf = key.split(".")
-        for part in path:
-            node = node.setdefault(part, {})
-        node[leaf] = yaml.safe_load(raw)
-    return overrides
-
-
-def _merge(base: dict, patch: dict) -> dict:
-    for k, v in patch.items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            _merge(base[k], v)
-        else:
-            base[k] = v
-    return base
+NOT_MODEL_FIELDS = {"policy_type"}
 
 
 def build_config(cfg: dict) -> SurgicalVLAConfig:
     valid_fields = {f.name for f in dataclasses.fields(SurgicalVLAConfig)}
-    kwargs = {}
-    for k, v in cfg.get("model", {}).items():
-        if k in valid_fields:
-            kwargs[k] = v
-        else:
-            warnings.warn(f"Unknown model config key '{k}', ignored.")
+    model_cfg = {k: v for k, v in cfg.get("model", {}).items() if k not in NOT_MODEL_FIELDS}
+    warn_unknown([k for k in model_cfg if k not in valid_fields], valid_fields, "model")
+    kwargs = {k: v for k, v in model_cfg.items() if k in valid_fields}
     for raw_key, v in cfg.get("moe", {}).items():
         k = MOE_ALIASES.get(raw_key, raw_key)
         if k in valid_fields:
             kwargs[k] = v
         else:
-            warnings.warn(f"Unknown moe config key '{raw_key}', ignored.")
+            warnings.warn(f"Unknown moe config key '{raw_key}', ignored.", stacklevel=2)
     if "gripper_dims" not in kwargs and "gripper_dims" in cfg.get("run", {}):
         kwargs["gripper_dims"] = cfg["run"]["gripper_dims"]
     return SurgicalVLAConfig(**kwargs)
@@ -74,6 +52,31 @@ def resolve_features(config: SurgicalVLAConfig, repo_id: str, camera_map: dict |
     features = {key_map.get(k, k): v for k, v in infer_features(meta).items()}
     config.input_features = {k: v for k, v in features.items() if v.type != FeatureType.ACTION}
     config.output_features = {k: v for k, v in features.items() if v.type == FeatureType.ACTION}
+
+
+def build_moe_config(cfg: dict) -> SmolVLAMoEConfig:
+    valid = {f.name for f in dataclasses.fields(SmolVLAMoEConfig)}
+    model_cfg = {k: v for k, v in cfg.get("model", {}).items() if k not in NOT_MODEL_FIELDS}
+    warn_unknown([k for k in model_cfg if k not in valid], valid, "model")
+    kwargs = {k: v for k, v in model_cfg.items() if k in valid}
+    for key, value in cfg.get("smolvla_moe", {}).items():
+        if key in valid:
+            kwargs[key] = value
+        else:
+            warnings.warn(f"Unknown smolvla_moe config key '{key}', ignored.", stacklevel=2)
+    if "gripper_dims" not in kwargs and "gripper_dims" in cfg.get("run", {}):
+        kwargs["gripper_dims"] = cfg["run"]["gripper_dims"]
+    return SmolVLAMoEConfig(**kwargs)
+
+
+def checkpoint_type(path: str | None) -> str | None:
+    if not path or not os.path.isdir(path):
+        return None
+    config_path = os.path.join(path, "config.json")
+    if not os.path.isfile(config_path):
+        return None
+    with open(config_path) as f:
+        return json.load(f).get("type")
 
 
 def resolve_resume_dir(resume_arg: str | bool | None, output_dir: str) -> str | None:
@@ -107,9 +110,7 @@ def main():
     parser.add_argument("overrides", nargs="*", help="dotlist overrides, e.g. model.chunk_size=25")
     args = parser.parse_args()
 
-    with open(args.config) as f:
-        cfg = yaml.safe_load(f)
-    _merge(cfg, _parse_dotlist(args.overrides))
+    cfg = load_config(args.config, args.overrides)
     ds_cfg = cfg.get("dataset", {})
     run_cfg = cfg.get("run", {})
     proj_cfg = cfg.get("project", {})
@@ -117,23 +118,32 @@ def main():
     root = ds_cfg.get("root", args.root)
     camera_map = ds_cfg.get("camera_map")
 
-    config = build_config(cfg)
+    policy_type = cfg.get("model", {}).get("policy_type", "surgical")
+    config = build_moe_config(cfg) if policy_type == "smolvla_moe" else build_config(cfg)
     resolve_features(config, args.repo_id, camera_map, root=root)
 
     output_dir = run_cfg.get("ckpt_dir", "./checkpoints")
     resume_arg = args.resume or run_cfg.get("resume")
     pretrained = args.pretrained or run_cfg.get("pretrained")
-    
+
     resume_dir = resolve_resume_dir(resume_arg, output_dir)
     ckpt = resume_dir or pretrained
 
-    policy = SurgicalVLAPolicy.from_pretrained(ckpt, config=config) if ckpt else SurgicalVLAPolicy(config)
+    if policy_type == "smolvla_moe":
+        if ckpt and checkpoint_type(ckpt) == "smolvla_moe":
+            policy = SmolVLAMoEPolicy.from_pretrained(ckpt, config=config)
+        elif ckpt:
+            policy = SmolVLAMoEPolicy.from_smolvla_pretrained(ckpt, config)
+        else:
+            policy = SmolVLAMoEPolicy(config)
+    else:
+        policy = SurgicalVLAPolicy.from_pretrained(ckpt, config=config) if ckpt else SurgicalVLAPolicy(config)
 
     streaming = run_cfg.get("streaming", False)
     val_fraction = ds_cfg.get("val_fraction", 0.01)
     train_eps = val_eps = None
     if streaming and val_fraction > 0:
-        warnings.warn("Streaming mode has no episode filtering; validation is disabled.")
+        warnings.warn("Streaming mode has no episode filtering; validation is disabled.", stacklevel=2)
     elif val_fraction > 0:
         split_path = os.path.join(output_dir, "split.json")
         if os.path.exists(split_path):
@@ -175,10 +185,11 @@ def main():
                 saved_repo_id = st.get("repo_id")
                 if saved_repo_id and saved_repo_id != args.repo_id:
                     warnings.warn(
-                        f"Resume checkpoint was trained on dataset '{saved_repo_id}', but current dataset is '{args.repo_id}'."
+                        f"Resume checkpoint was trained on dataset '{saved_repo_id}', but current dataset is '{args.repo_id}'.",
+                        stacklevel=2,
                     )
             except Exception as e:
-                warnings.warn(f"Could not inspect checkpoint state: {e}")
+                warnings.warn(f"Could not inspect checkpoint state: {e}", stacklevel=2)
 
     wandb_mode = proj_cfg.get("wandb_mode", "disabled")
     logger_kwargs = dict(

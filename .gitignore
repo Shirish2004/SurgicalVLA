@@ -1,25 +1,63 @@
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
-.venv/
-.uv/
 build/
 dist/
-outputs/
-*.pt
-*.pth
-.DS_Store
 .pytest_cache/
 .ruff_cache/
 .coverage
 htmlcov/
-*.zip
+.vscode/
+
+# Environments
+.pixi/
+.venv/
+.uv/
+uv.lock
+
+# Checkpoints / logs / run artefacts
 checkpoints/
 checkpoints2/
-*.pt
 wandb/
-.pytest_cache/
-.ruff_cache/
-.vscode/
+logs/
+eval_results/
+outputs/
+*.pt
+*.pth
+*.zip
+
+# Third-party checkouts (scripts/setup_libero.sh clones LIBERO here)
+LIBERO/
+
+# Reference implementations kept only for reading, never imported
+SimpleVLA-RL/
+verl/
 references/
 
+.DS_Store
+
+# Vendored upstream LeRobot checkout (its own git repo; pinned commit is recorded
+# in docs/baselines.md). Never commit it as an embedded repository.
+lerobot/
+
+# More run artefacts
+results/
+runs/
+*.safetensors
+*.ckpt
+*.mp4
+
+# Datasets / caches
+data/
+datasets/
+.cache/
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+credentials*.json
+.netrc
+.claude/settings.local.json

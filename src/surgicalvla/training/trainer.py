@@ -9,10 +9,11 @@ import torch
 from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 from torch.utils.data import DataLoader
-from surgicalvla.utils.splits import strided_subset
+
 from surgicalvla.utils.ema import EMA
-from surgicalvla.utils.metrics import Accumulator, chunk_metrics
 from surgicalvla.utils.logrun import ExperimentLogger
+from surgicalvla.utils.metrics import Accumulator, chunk_metrics
+from surgicalvla.utils.splits import strided_subset
 
 
 @lru_cache(maxsize=4)
@@ -43,7 +44,7 @@ def add_language_tokens(batch: dict, config) -> dict:
     return batch
 
 
-def _collapse_obs_history(batch: dict) -> dict:
+def collapse_obs_history(batch: dict) -> dict:
     """Takes the latest frame of any observation.* tensor carrying a history axis -- images
     (B, T, C, H, W) and vectors like state (B, T, D) alike. SmolVLA's forward expects neither
     to carry a history axis (only `action` legitimately keeps its (B, K, D) chunk dimension)."""
@@ -130,7 +131,7 @@ class Trainer:
         return {k: v.to(self.device, non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
 
     def _prep(self, raw: dict) -> dict:
-        return self._to_device(_collapse_obs_history(self.preprocessor(raw)))
+        return self._to_device(collapse_obs_history(self.preprocessor(raw)))
 
     def _cycle(self):
         while True:
@@ -138,7 +139,7 @@ class Trainer:
 
     def _preprocessed(self):
         for raw in self.loader:
-            yield _collapse_obs_history(self.preprocessor(raw))
+            yield collapse_obs_history(self.preprocessor(raw))
 
     def _load_state(self, path: str):
         f = os.path.join(path, "trainer_state.pt")
@@ -189,13 +190,13 @@ class Trainer:
     def _safe_log_scalars(self, scalars: dict, step: int):
         try:
             self.logger.log_scalars(scalars, step)
-        except Exception as e:
-            warnings.warn(f"Logging scalars failed at step {step} (resuming catch-up step): {e}")
+        except Exception as exc:
+            warnings.warn(f"Logging scalars failed at step {step} (resuming catch-up step): {exc}", stacklevel=2)
 
     def _safe_log_expert_usage(self, usage: dict, step: int):
         try:
             self.logger.log_expert_usage(usage, step)
-        except Exception as e:
+        except Exception:
             pass
 
     def fit(self):
@@ -217,11 +218,17 @@ class Trainer:
 
         for step in range(self.start_step + 1, self.steps + 1):
             self.optimizer.zero_grad(set_to_none=True)
+            # Average the reported metrics over the micro-batches: logging only the
+            # last one makes the logged loss noisier than the loss being optimised.
+            micro: dict[str, float] = {}
             for _ in range(self.grad_accum):
                 batch = self._prep(next(data_iter))
                 with self._amp():
                     loss, loss_dict = self.policy.forward(batch)
                 (loss / self.grad_accum).backward()
+                for k, v in loss_dict.items():
+                    micro[k] = micro.get(k, 0.0) + float(v) / self.grad_accum
+            loss_dict = micro
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 self.policy.get_optim_params(), self.policy.config.optimizer_grad_clip_norm
             )
@@ -260,7 +267,8 @@ class Trainer:
         if self.ema is not None:
             with self.ema.apply():
                 self._validate_once(step, "val_ema")
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     @torch.no_grad()
     def _validate_once(self, step: int, prefix: str, preview: bool = False):
@@ -279,7 +287,20 @@ class Trainer:
             time = torch.rand(bsz, generator=gen, device=self.device) * 0.998 + 0.001
             with self._amp():
                 _, ld = pol.forward(batch, noise=noise, time=time)
-            for k in ("loss", "losses_after_rm_padding", "skill_ce", "skill_acc", "route_entropy"):
+            for k in (
+                "loss",
+                "losses_after_rm_padding",
+                "fm_loss",
+                "cot_loss",
+                "moe_aux_loss",
+                "phase_loss",
+                "pose_aux_loss",
+                "skill_ce",
+                "skill_acc",
+                "route_entropy",
+                "moe_load_balance",
+                "moe_z",
+            ):
                 if k in ld:
                     stats[k] = stats.get(k, 0.0) + float(ld[k]) * bsz
             count += bsz
@@ -322,4 +343,5 @@ class Trainer:
             traceback.print_exc()
         finally:
             self.policy.train()
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()

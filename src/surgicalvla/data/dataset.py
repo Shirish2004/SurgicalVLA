@@ -7,13 +7,15 @@ Frame-window logic only depends on `config.observation_delta_indices` / `config.
 format version -- version compatibility is handled by LeRobotDataset itself.
 """
 
+import json
+import os
 import warnings
 
-from torch.utils.data import Dataset
-
+import torch
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.utils.constants import ACTION
+from torch.utils.data import Dataset
 
 
 def infer_features(meta: LeRobotDatasetMetadata) -> dict[str, PolicyFeature]:
@@ -42,9 +44,57 @@ def resolve_camera_map(meta: LeRobotDatasetMetadata, camera_map: dict[str, str] 
         warnings.warn(
             f"No dataset.camera_map entry for {unmapped}; using their dataset names as-is. "
             "If loading pretrained SmolVLA/SurgicalVLA weights, these must match the checkpoint's "
-            "camera feature names exactly or the policy will not find them in the batch."
+            "camera feature names exactly or the policy will not find them in the batch.",
+            stacklevel=2,
         )
     return camera_map
+
+
+STATS_REQUIRED = ("observation.state", ACTION)
+
+
+def _stats_path(path: str) -> str:
+    if os.path.isfile(path):
+        return path
+    for candidate in (os.path.join(path, "stats.json"), os.path.join(path, "meta", "stats.json")):
+        if os.path.isfile(candidate):
+            return candidate
+    raise FileNotFoundError(
+        f"no stats.json under {path!r} (looked for <path>/stats.json and <path>/meta/stats.json); "
+        "pass the dataset root, its meta directory, or the stats.json file itself"
+    )
+
+
+def load_stats(path: str) -> dict[str, dict[str, torch.Tensor]]:
+    """Read ``stats.json`` into the dict of tensors the processor pipelines expect.
+
+    Policy checkpoints written by this repo contain ``config.json`` / ``model.safetensors`` only -- **not** the dataset statistics.
+    Without them ``NormalizerProcessorStep`` silently identity-maps the feature
+    (see ``_apply_transform``), so the policy would be fed raw metres and raw
+    radians while the postprocessor ``unnormalize`` divides by std. The run would
+    train, log a plausible loss and behave like noise, so this loader fails
+    loudly instead: the state and action statistics are mandatory, and their
+    shapes are checked against the checkpoint by the caller.
+    """
+    path = _stats_path(path)
+    with open(path) as f:
+        raw = json.load(f)
+    stats = {
+        key: {name: torch.as_tensor(value, dtype=torch.float32) for name, value in values.items()}
+        for key, values in raw.items()
+    }
+    missing = [key for key in STATS_REQUIRED if key not in stats]
+    if missing:
+        raise KeyError(
+            f"{path} has no statistics for {missing}. These two features are what the "
+            "normalizer and the flow-matching loss operate on; without them training "
+            "silently runs on unnormalized data."
+        )
+    for key in STATS_REQUIRED:
+        absent = [name for name in ("mean", "std") if name not in stats[key]]
+        if absent:
+            raise KeyError(f"{path}: statistics for {key} are missing {absent}")
+    return stats
 
 
 class _RenamedDataset(Dataset):
@@ -66,6 +116,11 @@ class _RenamedDataset(Dataset):
 
     def __getitem__(self, idx):
         return {self._rename(k): v for k, v in self.base[idx].items()}
+
+    def __getitems__(self, indices):
+        if hasattr(self.base, "__getitems__"):
+            return [{self._rename(k): v for k, v in sample.items()} for sample in self.base.__getitems__(indices)]
+        return [self[i] for i in indices]
 
     def __getattr__(self, name):
         return getattr(self.base, name)

@@ -12,10 +12,10 @@ from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_pro
 from torch.utils.data import DataLoader
 
 from surgicalvla.data.dataset import build_dataset
-from surgicalvla.utils.splits import load_split, strided_subset
 from surgicalvla.modules.policy import SurgicalVLAPolicy
+from surgicalvla.training.trainer import collapse_obs_history
 from surgicalvla.utils.metrics import Accumulator, chunk_metrics
-from surgicalvla.training.trainer import _collapse_obs_history
+from surgicalvla.utils.splits import load_split, strided_subset
 
 
 def parse():
@@ -97,10 +97,11 @@ def main():
 
     with torch.no_grad():
         for raw in loader:
-            batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in _collapse_obs_history(pre(raw)).items()}
+            batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in collapse_obs_history(pre(raw)).items()}
             target, pad = batch["action"], batch.get("action_is_pad")
             actions = policy.prepare_action(batch)
-            labels = sk.labels(actions, pad, train=False)
+            state = policy.prepare_state(batch)
+            labels = model.set_skill_labels(actions, state, pad, train=False)
             bsz = target.shape[0]
             total += bsz
             if labels is not None:
@@ -112,7 +113,7 @@ def main():
             time = torch.rand(bsz, generator=gen, device=device) * 0.998 + 0.001
             with amp:
                 _, ld = policy.forward(batch, noise=noise, time=time)
-            for k in ("loss", "losses_after_rm_padding", "skill_ce", "skill_acc", "route_entropy"):
+            for k in ("loss", "losses_after_rm_padding", "skill_ce", "skill_acc", "route_entropy", "moe_load_balance"):
                 if k in ld:
                     fwd[k] = fwd.get(k, 0.0) + float(ld[k]) * bsz
 
@@ -123,12 +124,11 @@ def main():
                 cfg.num_steps = ns
                 model.moe_mode = mode
                 if mode == "oracle":
-                    model.prime(actions, pad)
+                    model.route.labels = labels
                 with torch.random.fork_rng(devices=devices):
                     torch.manual_seed(0)
                     with amp:
                         pred = policy.predict_action_chunk(batch)
-                model.pop_aux()
                 key = f"{mode}/steps{ns}"
                 acc.setdefault(key, Accumulator()).add(chunk_metrics(pred, target, pad, grip))
                 if labels is not None:

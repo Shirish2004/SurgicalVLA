@@ -4,41 +4,48 @@ build-backend = "hatchling.build"
 
 [project]
 name = "surgicalvla"
-version = "0.1.0"
-description = "Surgical Vision-Language-Action model for robotic surgery, built on LeRobot"
+version = "0.2.0"
+description = "Skill-routed Mixture-of-Experts Vision-Language-Action model for robotic surgery, built on LeRobot's SmolVLA"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-authors = [
-  { name = "Shirish" },
+authors = [{ name = "Shirish" }]
+keywords = [
+  "surgery",
+  "robotics",
+  "VLA",
+  "lerobot",
+  "mixture-of-experts",
+  "vision-language-action",
 ]
-keywords = ["surgery", "robotics", "VLA", "lerobot", "vision-language-action", "deep-learning"]
 classifiers = [
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.12",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = [
-  "cmake<4",
-  "egl-probe>=1.0.2",
-  "faster-whisper>=1.2.1",
-  "iniconfig>=2.3.0",
-  "lerobot[smolvla,dataset]==0.6.1",
-  "matplotlib>=3.8",                # visual_logging panels (camera weights, gate/beta maps)
-  "noisereduce>=3.0.3",
-  "openai-whisper>=20250625",
-  "parquet-cli>=1.3",
-  "parquet-tools>=0.2.16",
-  "pluggy>=1.6.0",
-  "pytest>=9.1.1",
-  "safetensors>=0.8.0",
-  "sounddevice>=0.5.6",
-  "spacy>=3.8.16",
-  "spacy-llm>=0.7.4",
-  "wandb>=0.18",
-]
+
+# Runtime dependencies are in the optional "main" extra so Pixi can keep
+# them out of the Python 3.10 LIBERO environment.
+dependencies = []
 
 [project.optional-dependencies]
+# LeRobot is installed from the local editable checkout by pixi.toml.
+main = [
+  "matplotlib>=3.8",
+  "numpy>=2.0,<2.3",
+  "pillow>=10.0",
+  "pyyaml>=6.0",
+  "scipy>=1.11",
+  "tensorboard>=2.16",
+  "torch>=2.7,<2.12",
+  "wandb>=0.24,<0.28",
+]
+
+asr = [
+  "faster-whisper>=1.2.1",
+  "noisereduce>=3.0.3",
+  "sounddevice>=0.5.6",
+]
+
 dev = [
   "pytest>=8.0",
   "ruff>=0.6",
@@ -49,12 +56,12 @@ packages = ["src/surgicalvla"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-q"
 
 [tool.ruff]
 line-length = 120
 target-version = "py312"
 
-[dependency-groups]
-dev = [
-    "ruff>=0.16.6",
-]
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

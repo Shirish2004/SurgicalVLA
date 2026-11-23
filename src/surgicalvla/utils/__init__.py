@@ -1,19 +1,23 @@
-"""Configuration and checkpoint utilities."""
+"""Logging, config plumbing, EMA, dataset splits, metrics.
 
-from .logrun import ExperimentLogger
-from .ema import EMA
-from .splits import split_episodes, load_split, save_split, strided_subset
-from .metrics import Accumulator, chunk_metrics, _pair
-from .asr import ASR
+``surgicalvla.utils.asr`` is optional (extra: ``asr``) and is not imported here.
+"""
+
+from surgicalvla.utils.config import load_config, merge_config, parse_dotlist
+from surgicalvla.utils.ema import EMA
+from surgicalvla.utils.logrun import ExperimentLogger
+from surgicalvla.utils.metrics import Accumulator, chunk_metrics
+from surgicalvla.utils.splits import load_split, save_split, split_episodes
+
 __all__ = [
     "Accumulator",
-    "ASR",
     "EMA",
     "ExperimentLogger",
-    "_pair",
     "chunk_metrics",
+    "load_config",
     "load_split",
+    "merge_config",
+    "parse_dotlist",
     "save_split",
     "split_episodes",
-    "strided_subset",
 ]

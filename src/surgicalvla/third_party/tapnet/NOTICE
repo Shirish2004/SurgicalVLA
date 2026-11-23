@@ -1,0 +1,10 @@
+Vendored from https://github.com/google-deepmind/tapnet at commit
+ceedd60bb9f6c9f7c74796e4445aff6c6ddf7c9b (Apache License 2.0, see LICENSE).
+
+Files: tapnet/tapnext/{tapnext_torch,tapnext_torch_utils,tapnext_lru_modules,pscan}.py
+       tapnet/tapnextpp/votsp2026/{model,utils}.py
+Modification: absolute imports `from tapnet.` were rewritten to
+`from surgicalvla.third_party.tapnet.`; no other changes.
+
+Checkpoint (Apache 2.0 per the tapnet README):
+https://storage.googleapis.com/dm-tapnet/tapnextpp/tapnextpp_ckpt.pt

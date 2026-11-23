@@ -30,6 +30,7 @@ import numpy as np
 import torch
 from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
 
+from surgicalvla.rl.benchmarks import LIBERO, BenchmarkMismatch, get_benchmark, validate_rl_setup
 from surgicalvla.data.dataset import load_stats
 from surgicalvla.modules.policy import SurgicalVLAPolicy
 from surgicalvla.rl import (
@@ -48,7 +49,15 @@ from surgicalvla.utils.logrun import ExperimentLogger
 # --------------------------------------------------------------------------- setup
 def build_policy(cfg: dict, device: str) -> SurgicalVLAPolicy:
     """Load the checkpoint, attach normalizing processors built from the dataset stats."""
-    checkpoint = cfg["checkpoint"]
+    spec = get_benchmark(cfg.get("benchmark", ""))
+    if spec is not LIBERO:
+        raise BenchmarkMismatch(f"benchmark={spec.name!r}, but this script drives the LIBERO simulator only")
+    checkpoint = cfg.get("checkpoint")
+    if not checkpoint:
+        raise BenchmarkMismatch(
+            "configs/rl.yaml needs a LIBERO-SFT SurgicalVLA checkpoint (8-D state, 7-D actions); "
+            "the existing checkpoints*/ were trained on RoboTwin (14-D) and cannot be used here"
+        )
     policy = SurgicalVLAPolicy.from_pretrained(checkpoint)
 
     stats = load_stats(cfg["stats"]["path"])
@@ -63,6 +72,19 @@ def build_policy(cfg: dict, device: str) -> SurgicalVLAPolicy:
                 "silently misaligned state/action space."
             )
 
+    lc = cfg["libero"]
+    validate_rl_setup(
+        spec,
+        policy_state_dim=state_dim,
+        policy_action_dim=action_dim,
+        policy_cameras=list(policy.config.image_features),
+        camera_map=lc["camera_map"],
+        action_slice=lc["action_slice"],
+        stats_state_dim=int(stats["observation.state"]["mean"].shape[-1]),
+        stats_action_dim=int(stats["action"]["mean"].shape[-1]),
+        dataset_id=cfg.get("dataset_id"),
+        env_gripper_dims=lc["env_gripper_dims"],
+    )
     policy.config.device = str(device)
     pre, post = make_smolvla_pre_post_processors(config=policy.config, dataset_stats=stats)
     # Attached under private names on purpose: they are part of the RL loop, not

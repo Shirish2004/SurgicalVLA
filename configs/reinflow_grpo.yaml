@@ -11,28 +11,34 @@ project:
   notes: "ReinFlow-GRPO over flow-matching SDE trajectories"
   tags: ["rl", "grpo", "reinflow", "libero"]
 
-checkpoint: "checkpoints/checkpoints/step_2000"
+# Which benchmark this run lives in. The checkpoint, its normalisation and the
+# simulator must all belong to it (src/surgicalvla/rl/benchmarks.py, audit A10).
+benchmark: libero
 
+# LIBERO-SFT starting point: SmolVLA fine-tuned on lerobot/libero (8-D state,
+# 7-D eef-delta actions), pinned. Normalisation comes from its saved processors.
+# A local smolvla_moe checkpoint trained on LIBERO works the same way.
+checkpoint: "lerobot/smolvla_libero"
+checkpoint_revision: "a24f1f380461b665158d52acd140152c79e8b36d"
 stats:
-  path: "/media/protomate/Seagate/shirish/robotwin_data/"
+  path: null                    # null -> use the checkpoint's own policy_preprocessor
 
 libero:
   suite: "libero_10"
   tasks: null
   val_tasks: null
-  camera_map:
-    observation.images.cam_high: agentview
-    observation.images.cam_left_wrist: eye_in_hand
-    observation.images.cam_right_wrist: agentview
-  camera_height: 128
-  camera_width: 128
-  action_slice: [0, 7]
+  camera_map:                   # policy camera -> simulator camera (one each)
+    observation.images.camera1: agentview
+    observation.images.camera2: eye_in_hand
+  camera_height: 360            # LeRobot LiberoEnvConfig default (lerobot-eval protocol)
+  camera_width: 360
+  action_slice: [0, 7]          # whole action vector; slicing is rejected
   action_scale: 1.0
-  gripper_sign: -1.0
+  gripper_sign: 1.0             # smolvla_libero already outputs LIBERO's gripper convention
   env_gripper_dims: [6]
-  n_exec_steps: 25
-  max_steps: 500
-  max_decisions: 20
+  n_exec_steps: 50              # = smolvla_libero n_action_steps, as in its SFT evaluation
+  max_steps: 520                # LeRobot TASK_SUITE_MAX_STEPS: spatial/object 280, goal 300, libero_10 520
+  max_decisions: 11             # ceil(max_steps / n_exec_steps)
   frame_every: 5
   max_cached_envs: 8
 

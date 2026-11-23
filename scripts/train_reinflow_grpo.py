@@ -20,11 +20,13 @@ from pathlib import Path
 import numpy as np
 import torch
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+from lerobot.policies.factory import make_pre_post_processors
 from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
 
 from surgicalvla.data.dataset import load_stats
 from surgicalvla.modules.configuration_smolvla_moe import SmolVLAMoEConfig
 from surgicalvla.modules.modeling_smolvla_moe import SmolVLAMoEPolicy
+from surgicalvla.rl.benchmarks import LIBERO, BenchmarkMismatch, get_benchmark, validate_rl_setup
 from surgicalvla.rl import (
     LiberoClient,
     compute_handover_reward,
@@ -37,8 +39,33 @@ from surgicalvla.utils.config import load_config
 from surgicalvla.utils.logrun import ExperimentLogger
 
 
+def resolve_checkpoint(cfg: dict) -> Path:
+    """Local checkpoint dir, or a Hub repo id downloaded at ``checkpoint_revision``."""
+    ref = str(cfg["checkpoint"])
+    if Path(ref).is_dir():
+        return Path(ref)
+    from huggingface_hub import snapshot_download
+
+    return Path(snapshot_download(ref, revision=cfg.get("checkpoint_revision")))
+
+
+def checkpoint_dataset_id(checkpoint: Path) -> str | None:
+    """The dataset the checkpoint was trained on, when its train_config.json records it."""
+    train_cfg = checkpoint / "train_config.json"
+    if not train_cfg.is_file():
+        return None
+    return (json.loads(train_cfg.read_text()).get("dataset") or {}).get("repo_id")
+
+
 def build_policy(cfg: dict, device: str) -> SmolVLAMoEPolicy:
-    checkpoint = Path(cfg["checkpoint"])
+    """Load the SFT checkpoint and its normalisation, refusing cross-benchmark setups (A10)."""
+    spec = get_benchmark(cfg.get("benchmark", ""))
+    if spec is not LIBERO:
+        raise BenchmarkMismatch(
+            f"benchmark={spec.name!r}, but this script drives the LIBERO simulator only. "
+            "RoboTwin RL needs a RoboTwin env client and must stay in its 14-D joint space."
+        )
+    checkpoint = resolve_checkpoint(cfg)
     policy_type = json.loads((checkpoint / "config.json").read_text()).get("type")
     if policy_type == "smolvla_moe":
         policy = SmolVLAMoEPolicy.from_pretrained(str(checkpoint))
@@ -50,18 +77,58 @@ def build_policy(cfg: dict, device: str) -> SmolVLAMoEPolicy:
         )
         policy = SmolVLAMoEPolicy.from_smolvla_pretrained(str(checkpoint), config)
 
-    stats = load_stats(cfg["stats"]["path"])
     action_dim = int(policy.config.action_feature.shape[0])
     state_dim = int(policy.config.robot_state_feature.shape[0])
-    for key, expected in (("action", action_dim), ("observation.state", state_dim)):
-        got = int(stats[key]["mean"].shape[-1])
-        if got != expected:
-            raise ValueError(f"{key} stats are {got}-D but {checkpoint} expects {expected}-D")
     policy.config.device = str(device)
-    pre, post = make_smolvla_pre_post_processors(config=policy.config, dataset_stats=stats)
+    lc = cfg["libero"]
+
+    # Normalisation must be exactly the SFT one: use the checkpoint's saved processors
+    # when it has them; a separate stats file is only a fallback and is checked too.
+    stats_cfg = cfg.get("stats") or {}
+    if (checkpoint / "policy_preprocessor.json").is_file() and not stats_cfg.get("path"):
+        pre, post = make_pre_post_processors(
+            policy.config,
+            pretrained_path=str(checkpoint),
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+        )
+        stats_dims = _processor_stat_dims(pre)
+        stats_source = f"{checkpoint}/policy_preprocessor.json"
+    else:
+        if not stats_cfg.get("path"):
+            raise BenchmarkMismatch(f"{checkpoint} has no saved processors; set stats.path to its training stats")
+        stats = load_stats(stats_cfg["path"])
+        stats_dims = (int(stats["observation.state"]["mean"].shape[-1]), int(stats["action"]["mean"].shape[-1]))
+        pre, post = make_smolvla_pre_post_processors(config=policy.config, dataset_stats=stats)
+        stats_source = stats_cfg["path"]
+
+    validate_rl_setup(
+        spec,
+        policy_state_dim=state_dim,
+        policy_action_dim=action_dim,
+        policy_cameras=list(policy.config.image_features),
+        camera_map=lc["camera_map"],
+        action_slice=lc["action_slice"],
+        stats_state_dim=stats_dims[0],
+        stats_action_dim=stats_dims[1],
+        dataset_id=cfg.get("dataset_id") or checkpoint_dataset_id(checkpoint),
+        env_gripper_dims=lc["env_gripper_dims"],
+    )
+    print(f"normalisation: {stats_source}")
     policy._rl_preprocessor = pre
     policy._rl_postprocessor = post
     return policy.to(device)
+
+
+def _processor_stat_dims(pipeline) -> tuple[int | None, int | None]:
+    """(state_dim, action_dim) of the normaliser statistics inside a processor pipeline."""
+    for step in getattr(pipeline, "steps", []):
+        stats = getattr(step, "stats", None)
+        if stats:
+            state = stats.get("observation.state", {}).get("mean")
+            action = stats.get("action", {}).get("mean")
+            dim = lambda t: None if t is None else int(torch.as_tensor(t).shape[-1])  # noqa: E731
+            return dim(state), dim(action)
+    return None, None
 
 
 def build_optimizer(policy, lr: float):

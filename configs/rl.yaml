@@ -18,14 +18,14 @@ project:
 # Starting policy. Must be a directory written by `policy.save_pretrained`
 # (config.json + model.safetensors); the processor pipelines are rebuilt here
 # from `stats`, because checkpoints do not carry dataset statistics.
-checkpoint: "checkpoints/checkpoints/step_2000"
-
+# The checkpoint, its stats and the simulator must belong to one benchmark
+# (src/surgicalvla/rl/benchmarks.py, audit A10). The checkpoints*/ in this repo were
+# trained on RoboTwin (14-D joint space) and are rejected for LIBERO.
+benchmark: libero
+checkpoint: null                # a LIBERO-SFT SurgicalVLA checkpoint (none trained yet)
+dataset_id: "lerobot/libero"    # dataset the checkpoint and stats come from
 stats:
-  # Dataset root, its meta/ directory, or a stats.json file. Only
-  # `observation.state` and `action` are used (14-D each, matching the
-  # checkpoint); the image statistics are identity-mapped in SmolVLA.
-  path: "/media/protomate/Seagate/shirish/robotwin_data/"
-
+  path: null                    # that dataset's stats.json (8-D state, 7-D action)
 libero:
   suite: "libero_10"            # libero_spatial | libero_object | libero_goal | libero_10 | libero_90
   tasks: null                   # null -> every task in the suite; else a list of exact task names
@@ -34,10 +34,9 @@ libero:
   # LIBERO provides two, so the right wrist duplicates the agent view. That is a
   # real limitation, not a placeholder: predict_action_chunk still gets the
   # right feature shapes, but the duplicate carries no new information.
-  camera_map:
-    observation.images.cam_high: agentview
-    observation.images.cam_left_wrist: eye_in_hand
-    observation.images.cam_right_wrist: agentview
+  camera_map:                   # policy camera -> simulator camera (one each)
+    observation.images.camera1: agentview
+    observation.images.camera2: eye_in_hand
   camera_height: 128
   camera_width: 128
   # The checkpoint is 14-D (7 per arm); LIBERO OSC_POSE is 7-D (one arm).
@@ -46,7 +45,7 @@ libero:
   action_scale: 1.0             # multiply the normalized-then-unnormalized action before sending
   # LIBERO's +1 closes the gripper; `proprio_state` reports openness, so sending
   # -1 opens. Measured on libero_10/libero_spatial, not assumed.
-  gripper_sign: -1.0
+  gripper_sign: 1.0             # LIBERO-trained policies already use LIBERO's convention
   env_gripper_dims: [6]         # index of the gripper inside the sliced 7-D action
   n_exec_steps: 25              # open-loop steps executed per predicted chunk (chunk is 50)
   max_steps: 500                # simulator steps per episode

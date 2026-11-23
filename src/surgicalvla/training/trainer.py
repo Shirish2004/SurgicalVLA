@@ -170,7 +170,11 @@ class Trainer:
         ckpt = f"{self.output_dir}/checkpoints/step_{step}"
         os.makedirs(ckpt, exist_ok=True)
         self.policy.save_pretrained(ckpt)
-        
+        # Save the normaliser with the weights: lerobot-eval and the RL stage read it from
+        # the checkpoint, so a checkpoint without it cannot be evaluated or fine-tuned.
+        self.preprocessor.save_pretrained(ckpt)
+        self.postprocessor.save_pretrained(ckpt)
+
         run_id = self._get_wandb_run_id()
         torch.save(
             {

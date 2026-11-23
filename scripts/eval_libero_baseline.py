@@ -66,7 +66,8 @@ def run(args) -> None:
                 print(f"[skip] {out} exists")
                 continue
             cmd = [
-                "lerobot-eval",
+                sys.executable,
+                str(Path(__file__).with_name("lerobot_eval.py")),
                 f"--policy.path={args.policy}",
                 f"--policy.device={args.device}",
                 f"--env.type={args.env_type}",

@@ -13,6 +13,10 @@ Every benchmark has its own model, configs and outputs:
     python3 scripts/benchmark.py eval --benchmark {libero,libero_plus,robotwin,vlabench} --checkpoint ...
     # everything: SFT then RL on every benchmark, then evaluate every model (SFT and RL) on its benchmark
     python3 scripts/benchmark.py pipeline [--benchmarks libero robotwin vlabench] [--libero-plus]
+    # Step-4 pilot: ablation arms at matched compute on one LIBERO suite, 3 seeds, then evaluation
+    python3 scripts/benchmark.py pilot --suite libero_spatial --steps 20000 [--arms baseline vision_aux ...]
+    # pseudo-labels, reasoning traces and their validation
+    python3 scripts/benchmark.py labels --suite libero_spatial
 
 ``--dry-run`` prints the commands; arguments after ``--`` go to the trainer / lerobot-eval.
 
@@ -214,6 +218,62 @@ def eval_cmds(args, extra: list[str]) -> list[list[str]]:
     return cmds
 
 
+# ----------------------------------------------------------------------------- pilot
+SIDECAR = "pseudolabels"
+_NO_COT = ["smolvla_moe.use_cot=false"]
+ARMS = {
+    "baseline": _NO_COT,
+    "vision_aux": [*_NO_COT, "smolvla_moe.aux_vision=true", f"aux.sidecar_root={SIDECAR}"],
+    "cot_latent": [*_NO_COT, "smolvla_moe.latent_cot=true"],
+    "cot_explicit": ["smolvla_moe.use_cot=true", f"aux.sidecar_root={SIDECAR}", "aux.cot_traces=true"],
+    "both": ["smolvla_moe.use_cot=true", "smolvla_moe.aux_vision=true", "smolvla_moe.latent_cot=true",
+             f"aux.sidecar_root={SIDECAR}", "aux.cot_traces=true"],
+    "moe_matched": [*_NO_COT, "smolvla_moe.moe_variant=matched"],
+    "dense": [*_NO_COT, "smolvla_moe.moe_variant=dense"],
+    "dense_param_matched": [*_NO_COT, "smolvla_moe.moe_variant=dense_param_matched"],
+}
+
+
+def suite_episodes(suite: str) -> Path:
+    path = ROOT / "configs" / "data" / f"libero_{suite}_episodes.json"
+    if not path.exists():
+        sys.exit(f"{path} missing: run `pixi run -e sim-eval python scripts/libero_suite_episodes.py --suite {suite}`")
+    return path
+
+
+def pilot(args, extra: list[str]) -> None:
+    """Each arm x seed: SFT on one LIBERO suite with identical steps, batch and data, then evaluation."""
+    episodes = suite_episodes(args.suite).relative_to(ROOT)
+    for arm in args.arms:
+        for seed in args.seeds:
+            out = f"outputs/pilot/{args.suite}/{arm}/seed{seed}"
+            overrides = [*ARMS[arm], f"run.ckpt_dir={out}", f"run.seed={seed}", f"run.steps={args.steps}",
+                         f"dataset.episodes={episodes}", "dataset.val_fraction=0"]
+            if arm == "both":
+                overrides.append(f"smolvla_moe.cot_curriculum_steps={args.steps // 2}")
+            train = pixi("dev", "python", "scripts/train.py", "--config", "configs/benchmarks/libero/sft.yaml",
+                         "--repo_id", "lerobot/libero", *overrides, *extra)
+            execute([train], args.dry_run)
+            ev = argparse.Namespace(benchmark="libero", checkpoint=out, revision=None, name=f"{arm}_seed{seed}",
+                                    out=f"results/pilot/{args.suite}/{arm}/seed{seed}", seeds=[1000],
+                                    suites=[args.suite], tasks=None, local=False)
+            execute(eval_cmds(ev, []), args.dry_run)
+
+
+def labels(args, extra: list[str]) -> None:
+    """Pseudo-labels for one suite's demonstrations, bootstrap reasoning traces, validation videos."""
+    episodes = ",".join(map(str, json.loads(suite_episodes(args.suite).read_text())[: args.limit or None]))
+    cmds = [
+        pixi("dev", "python", "scripts/make_pseudolabels.py", "--repo-id", "lerobot/libero", "--episodes", episodes,
+             "--gripper-dims", "6", "--out", SIDECAR, "--stride", str(args.stride),
+             "--save-videos", f"results/pseudolabels/videos/{args.suite}", "--report", f"results/pseudolabels/{args.suite}_cost.json"),
+        pixi("dev", "python", "scripts/make_cot_traces.py", "--repo-id", "lerobot/libero", "--episodes", episodes,
+             "--sidecar", SIDECAR, "--checkpoint", "lerobot/smolvla_libero",
+             "--revision", "a24f1f380461b665158d52acd140152c79e8b36d", "--bootstrap"),
+    ]
+    execute(cmds, args.dry_run)
+
+
 # ----------------------------------------------------------------------------- pipeline
 def pipeline(args, extra: list[str]) -> None:
     """SFT -> RL per benchmark, then evaluate every benchmark's SFT and RL model on its benchmark."""
@@ -270,8 +330,25 @@ def main() -> None:
     p.add_argument("--skip-rl", action="store_true")
     p.add_argument("--dry-run", action="store_true")
 
+    pl = sub.add_parser("pilot")
+    pl.add_argument("--suite", default="libero_spatial")
+    pl.add_argument("--arms", nargs="+", default=["baseline", "vision_aux", "cot_latent", "cot_explicit", "both"], choices=list(ARMS))
+    pl.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
+    pl.add_argument("--steps", type=int, default=20000, help="identical for every arm (matched compute)")
+    pl.add_argument("--dry-run", action="store_true")
+
+    lb = sub.add_parser("labels")
+    lb.add_argument("--suite", default="libero_spatial")
+    lb.add_argument("--stride", type=int, default=2)
+    lb.add_argument("--limit", type=int, default=0, help="first N episodes only (0 = all)")
+    lb.add_argument("--dry-run", action="store_true")
+
     args = ap.parse_args(argv)
-    if args.cmd == "pipeline":
+    if args.cmd == "pilot":
+        pilot(args, extra)
+    elif args.cmd == "labels":
+        labels(args, extra)
+    elif args.cmd == "pipeline":
         pipeline(args, extra)
     else:
         execute(train_cmds(args, extra) if args.cmd == "train" else eval_cmds(args, extra), args.dry_run)

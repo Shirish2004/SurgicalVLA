@@ -92,7 +92,14 @@ PYOPENGL_PLATFORM = "egl"
 #   pixi run -e dev train sft --benchmark libero --policy smolvla
 #   pixi run -e dev eval --benchmark libero --checkpoint lerobot/smolvla_libero --revision <sha>
 #   pixi run -e dev test
+#   pixi run -e dev labels --suite libero_spatial --limit 3      # pseudo-labels + traces (+ videos)
+#   pixi run -e dev pilot --suite libero_spatial --dry-run       # Step-4 ablation grid
+#   pixi run -e dev smoke                                        # full-architecture smoke test
+#   pixi run -e sim-eval python scripts/validate_pseudolabels.py --hdf5 <LIBERO demo file>
 [feature.dev.tasks]
 train = "python scripts/benchmark.py train"
 eval = "python scripts/benchmark.py eval"
 test = "pytest -p no:warnings -q tests"
+pilot = "python scripts/benchmark.py pilot"
+labels = "python scripts/benchmark.py labels"
+smoke = "python scripts/smoke_full_arch.py"

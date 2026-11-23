@@ -4,8 +4,13 @@ import argparse
 import dataclasses
 import json
 import os
+import random
 import re
 import warnings
+from pathlib import Path
+
+import numpy as np
+import torch
 
 from lerobot.configs import FeatureType
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
@@ -125,6 +130,10 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.config, args.overrides)
+    seed = int(cfg.get("run", {}).get("seed", 0))
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     ds_cfg = cfg.get("dataset", {})
     run_cfg = cfg.get("run", {})
     proj_cfg = cfg.get("project", {})
@@ -161,7 +170,10 @@ def main():
     else:
         blocks = ds_cfg.get("episode_blocks")
         pool = None
-        if blocks:  # e.g. RoboTwin demo_clean: first 50 of every 550-episode task block
+        if ds_cfg.get("episodes"):  # explicit list, or a JSON file holding one (e.g. one LIBERO suite)
+            eps = ds_cfg["episodes"]
+            pool = json.loads(Path(eps).read_text()) if isinstance(eps, str) else [int(e) for e in eps]
+        elif blocks:  # e.g. RoboTwin demo_clean: first 50 of every 550-episode task block
             meta = LeRobotDatasetMetadata(args.repo_id, root=root)
             pool = block_episodes(meta.total_episodes, int(blocks["block"]), int(blocks["take"]))
         split_path = os.path.join(output_dir, "split.json")
@@ -199,7 +211,6 @@ def main():
         state_path = os.path.join(resume_dir, "trainer_state.pt")
         if os.path.exists(state_path):
             try:
-                import torch
                 st = torch.load(state_path, map_location="cpu", weights_only=False)
                 if not wandb_run_id and st.get("wandb_run_id"):
                     wandb_run_id = st.get("wandb_run_id")

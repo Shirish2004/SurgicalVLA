@@ -49,8 +49,8 @@ runs/
 *.mp4
 
 # Datasets / caches
-data/
-datasets/
+/data/
+/datasets/
 .cache/
 
 # Secrets

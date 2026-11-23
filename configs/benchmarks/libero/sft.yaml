@@ -15,6 +15,7 @@ project:
 
 run:
   steps: 50000                       # total training steps
+  seed: 0
   batch_size: 24
   device: "cuda"                     # "cuda" or "cpu"
   ckpt_dir: "outputs/libero/sft"
@@ -83,6 +84,17 @@ smolvla_moe:
   pose_aux_loss_weight: 0.2
   expert_cross_attn_vlm_layers: 0  # must equal num_vlm_layers (0 -> all)
   use_reinflow: false
+  # architecture switches (experimental until their ablation passes; docs/limitations.md)
+  moe_variant: "upcycled"         # upcycled | matched | dense | dense_param_matched
+  aux_vision: false               # label-free auxiliary vision heads (needs aux.sidecar_root)
+  latent_cot: false               # latent reasoning tokens predicting a future visual latent
+  cot_curriculum_steps: 0         # >0: explicit -> latent CoT curriculum over this many steps
+
+# Pseudo-label sidecar (scripts/make_pseudolabels.py); used only when a switch above needs it
+aux:
+  sidecar_root: null              # e.g. "pseudolabels"
+  track_horizon: 5                # labelled frames ahead for the point-track target
+  cot_traces: false               # feed explicit reasoning traces (scripts/make_cot_traces.py)
 
 # Visual panels / CSV / routing-drift plots
 logging:

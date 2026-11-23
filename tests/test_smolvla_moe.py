@@ -284,7 +284,8 @@ def make_batch(config, bsize=2, seed=1):
         actions=torch.randn(bsize, config.chunk_size, config.max_action_dim, generator=g),
         obj_sam_feat=torch.randn(bsize, 2, C_SAM, generator=g),
         obj_pose_vec=torch.randn(bsize, 2, 13, generator=g),
-        obj_valid_mask=torch.tensor([[True, False], [True, True]]),
+        # Row 0 has one inactive slot; every other row has both slots active.
+        obj_valid_mask=torch.tensor([[True, False]] + [[True, True]] * (bsize - 1)),
         cot_ids=torch.randint(0, VOCAB, (bsize, 4), generator=g),
         cot_mask=torch.ones(bsize, 4, dtype=torch.bool),
         cot_phase_positions=torch.tensor([2, 1]),
@@ -419,6 +420,7 @@ def test_moe_expert_matches_dense_dtype():
 
 def test_moe_topk_and_aux_loss():
     dense = MLP(H, 2 * H)
+    moe = PhaseConditionedMoEFFN(dense, H, H, H, num_experts=4, num_shared_experts=1, top_k=2)
     with torch.no_grad():
         moe.router.weight.normal_(0, 0.5)
     x = torch.randn(2, 6, H)

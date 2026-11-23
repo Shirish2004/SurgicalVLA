@@ -46,6 +46,9 @@ class VisionConfig:
     new_det_threshold: float = 0.2  # SAM 3 video new_det_thresh (model default 0.7)
     gripper_overlap: float = 0.5  # target candidates overlapping the gripper more than this are rejected
     dtype: str = "float16"
+    # gripper reference point for the displacement target: "centroid" of the end-effector mask,
+    # the mask pixel "nearest" to the target centroid, or the "lowest" mask pixels (image space)
+    gripper_point: str = "nearest"
 
 
 def _centroid(mask: np.ndarray) -> np.ndarray | None:
@@ -76,6 +79,20 @@ def _carried_score(obj_c: list, grip_c: list, grasp_frame: int | None, min_step:
     if len(cos) < 3:
         return 0.0
     return float(np.clip(np.mean(cos), 0.0, 1.0))
+
+
+def gripper_point(mask: np.ndarray, target: np.ndarray | None, mode: str) -> np.ndarray | None:
+    """Normalised ``[x, y]`` reference point of the end-effector mask."""
+    ys, xs = np.nonzero(mask)
+    if len(xs) == 0:
+        return None
+    h, w = mask.shape
+    pts = np.stack([xs / w, ys / h], axis=1)
+    if mode == "nearest" and target is not None:
+        return pts[np.argmin(np.linalg.norm(pts - target, axis=1))]
+    if mode == "lowest":
+        return pts[ys >= np.quantile(ys, 0.95)].mean(axis=0)
+    return pts.mean(axis=0)
 
 
 def _box(mask: np.ndarray) -> np.ndarray:
@@ -212,7 +229,7 @@ class VisionLabeler:
         feats = self.pooled_features(frames, obj_m)
         n = len(frames)
         obj_c = [_centroid(m) for m in obj_m]
-        grip_c = [_centroid(m) for m in grip_m]
+        grip_c = [gripper_point(m, c, self.cfg.gripper_point) for m, c in zip(grip_m, obj_c, strict=True)]
         obj_d = np.array([np.median(depth[f][obj_m[f]]) if obj_m[f].any() else 0.0 for f in range(n)])
         grip_d = np.array([np.median(depth[f][grip_m[f]]) if grip_m[f].any() else 0.0 for f in range(n)])
         rel = np.zeros((n, 3))
@@ -244,6 +261,7 @@ class VisionLabeler:
             "obj_motion": motion.astype(f16),
             "motion_confidence": motion_conf.astype(f16),
             "_obj_masks_full": obj_m,  # consumed by the point tracker, not stored
+            "_grip_masks_full": grip_m,  # used by validation, not stored
         }
 
 

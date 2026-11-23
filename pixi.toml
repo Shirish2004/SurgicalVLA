@@ -81,6 +81,8 @@ scipy = ">=1.14.0,<2.0.0"
 # (lerobot-env-server), e.g. LIBERO-Plus, which replaces hf-libero.
 eclipse-zenoh = ">=1.9.0,<1.11.0"
 msgpack = ">=1.1.0,<2.0.0"
+# original LIBERO demonstrations (HDF5 with simulator states), used only to validate pseudo-labels
+h5py = ">=3.10"
 
 [feature.simeval.activation.env]
 MUJOCO_GL = "egl"

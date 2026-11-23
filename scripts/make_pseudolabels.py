@@ -99,6 +99,7 @@ def main() -> None:
     ap.add_argument("--out", default="pseudolabels")
     ap.add_argument("--max-gb", type=float, default=20.0)
     ap.add_argument("--report", help="write timing / disk cost per episode and per 1,000 episodes as JSON")
+    ap.add_argument("--save-videos", help="directory for per-episode overlay videos of the tracked target")
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
 
@@ -153,6 +154,7 @@ def main() -> None:
         masks = None
         if vis is not None:
             masks = vis.pop("_obj_masks_full")
+            vis.pop("_grip_masks_full")
             arrays.update(vis)
         t = time.time()
         if tracker is not None and masks is not None:
@@ -161,6 +163,11 @@ def main() -> None:
         arrays.update(
             phase_frames=pb.frames.astype(np.int32), phase_kinds=pb.kinds.astype(np.int8), phase_confidence=pb.confidence.astype(np.float16)
         )
+        if args.save_videos:
+            from surgicalvla.pseudolabels.viz import overlay_frames, write_mp4
+
+            fps = max(1, int(round(meta.fps / args.stride)))
+            write_mp4(overlay_frames(sub, arrays), Path(args.save_videos) / f"ep_{ep:06d}.mp4", fps=fps)
         size = store.write(ep, arrays, stats={"frames": int(len(frames)), "labelled": int(len(idx)), **{k: round(v, 3) for k, v in timing.items()}})
         row = {"episode": ep, "frames": int(len(frames)), "labelled": int(len(idx)), "bytes": size, "phrase": phrase,
                "obj_valid": float((arrays.get("obj_score", np.zeros(1)) > 0).mean()), **timing}

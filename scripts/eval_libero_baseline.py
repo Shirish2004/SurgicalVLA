@@ -69,7 +69,7 @@ def run(args) -> None:
                 "lerobot-eval",
                 f"--policy.path={args.policy}",
                 f"--policy.device={args.device}",
-                "--env.type=libero",
+                f"--env.type={args.env_type}",
                 f"--env.task={suite}",
                 f"--env.observation_height={args.resolution}",
                 f"--env.observation_width={args.resolution}",
@@ -81,8 +81,8 @@ def run(args) -> None:
             ]
             if args.revision:
                 cmd.insert(2, f"--policy.pretrained_revision={args.revision}")
-            if args.libero_plus:
-                cmd.append("--env.is_libero_plus=true")
+            if args.server_endpoint:
+                cmd.append(f"--env.server.endpoint={args.server_endpoint}")
             if args.task_ids:
                 cmd.append(f"--env.task_ids={json.dumps(args.task_ids)}")
             print("[run]", " ".join(cmd), flush=True)
@@ -167,7 +167,8 @@ def main() -> None:
     r.add_argument("--batch-size", type=int, default=10)
     r.add_argument("--resolution", type=int, default=360, help="LeRobot LiberoEnvConfig default")
     r.add_argument("--task-ids", nargs="*", type=int)
-    r.add_argument("--libero-plus", action="store_true")
+    r.add_argument("--env-type", default="libero", choices=["libero", "libero_plus"])
+    r.add_argument("--server-endpoint", help="drive a Docker-served simulator (lerobot-env-server), e.g. tcp/127.0.0.1:7448")
     r.add_argument("--device", default="cuda")
     r.add_argument("--out", default="results/baselines/smolvla_libero")
     r.add_argument("--overwrite", action="store_true")

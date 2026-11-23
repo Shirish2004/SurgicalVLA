@@ -85,3 +85,12 @@ msgpack = ">=1.1.0,<2.0.0"
 [feature.simeval.activation.env]
 MUJOCO_GL = "egl"
 PYOPENGL_PLATFORM = "egl"
+
+# Short entry points (see scripts/benchmark.py --help):
+#   pixi run -e dev train sft --benchmark libero --policy smolvla
+#   pixi run -e dev eval --benchmark libero --checkpoint lerobot/smolvla_libero --revision <sha>
+#   pixi run -e dev test
+[feature.dev.tasks]
+train = "python scripts/benchmark.py train"
+eval = "python scripts/benchmark.py eval"
+test = "pytest -p no:warnings -q tests"

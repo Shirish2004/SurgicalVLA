@@ -105,3 +105,27 @@ def test_gaussian_entropy_masks_padding():
     full = gaussian_entropy(log_std)
     masked = gaussian_entropy(log_std, action_dim=2, action_is_pad=torch.tensor([[False, False, True, True]]))
     assert full.item() > masked.item() > 0
+
+
+def test_step_ratio_has_lower_variance_than_sequence_ratio():
+    """Audit A6: per-step ratios clip far less often than the K-step product."""
+    torch.manual_seed(0)
+    k, b = 5, 4096
+    old = torch.zeros(k, b)
+    new = old + 0.08 * torch.randn(k, b)  # small per-step policy drift
+    adv = torch.ones(b)
+    step = grpo_surrogate(new, old, adv, clip=0.2, ratio_level="step")
+    seq = grpo_surrogate(new, old, adv, clip=0.2, ratio_level="sequence")
+    assert step["clip_fraction"] < seq["clip_fraction"]
+
+
+def test_step_and_sequence_ratio_share_gradient_at_ratio_one():
+    old = torch.full((3, 2), -5.0)
+    adv = torch.tensor([1.0, -0.5])
+    grads = []
+    for level in ("step", "sequence"):
+        new = old.clone().requires_grad_(True)
+        grpo_surrogate(new, old, adv, ratio_level=level)["policy_loss"].backward()
+        grads.append(new.grad.clone())
+    # step averages over K*B terms, sequence over B: same direction, scale 1/K
+    torch.testing.assert_close(grads[0] * 3, grads[1])

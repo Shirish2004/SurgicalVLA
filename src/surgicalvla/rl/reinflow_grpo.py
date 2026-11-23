@@ -86,10 +86,30 @@ def grpo_surrogate(
     kl_coef: float = 0.0,
     entropy: Tensor | None = None,
     entropy_coef: float = 0.0,
+    ratio_level: str = "step",
 ) -> dict[str, Tensor]:
-    new = sequence_log_prob(new_log_probs)
-    old = sequence_log_prob(old_log_probs)
-    adv = advantages.to(new.device, new.dtype).reshape(-1)
+    """Clipped GRPO surrogate over flow-SDE transition log-probs.
+
+    ``*_log_probs`` are ``(K, B)`` per-denoising-step log-densities (or ``(B,)``).
+
+    ``ratio_level="step"`` (default) uses one importance ratio per SDE transition,
+    ``r_{k,b} = pi(x_{k+1}|x_k) / pi_old(x_{k+1}|x_k)``, and averages the clipped
+    terms over ``(k, b)``, as in Flow-GRPO (per denoising step) and SimpleVLA-RL
+    (per token). ``"sequence"`` uses the product over steps. Audit A6: the
+    sequence ratio's log is a sum of ``K*T*D`` Gaussian terms, so its variance is
+    ``K`` times the per-step one; in practice almost every sample is clipped and
+    the gradient vanishes. Both levels have the same first-order gradient at
+    ``ratio = 1``; they differ in how quickly clipping engages.
+    """
+    if ratio_level not in ("step", "sequence"):
+        raise ValueError(f"ratio_level must be 'step' or 'sequence', got {ratio_level!r}")
+    per_step = ratio_level == "step" and new_log_probs.ndim == 2
+    if per_step:
+        new, old = new_log_probs, old_log_probs.to(new_log_probs)
+        adv = advantages.to(new.device, new.dtype).reshape(1, -1).expand_as(new)
+    else:
+        new, old = sequence_log_prob(new_log_probs), sequence_log_prob(old_log_probs).to(new_log_probs)
+        adv = advantages.to(new.device, new.dtype).reshape(-1)
     log_ratio = (new - old).clamp(-20.0, 20.0)
     ratio = log_ratio.exp()
     unclipped = ratio * adv
@@ -99,17 +119,21 @@ def grpo_surrogate(
     out = {
         "policy_loss": policy_loss,
         "ratio_mean": ratio.mean().detach(),
+        "ratio_max": ratio.max().detach(),
         "clip_fraction": ((ratio - 1.0).abs() > clip).float().mean().detach(),
+        # k1 estimate of KL(pi_old || pi) on the behaviour samples
+        "old_approx_kl": (-log_ratio).mean().detach(),
     }
     loss = policy_loss
     if ref_log_probs is not None and kl_coef > 0:
-        ref = sequence_log_prob(ref_log_probs).detach()
+        ref = (ref_log_probs if per_step else sequence_log_prob(ref_log_probs)).to(new).detach()
         diff = (ref - new).clamp(-20.0, 20.0)
+        # k3 estimator of KL(pi || pi_ref), non-negative and unbiased (Schulman 2020)
         kl = (diff.exp() - diff - 1.0).mean()
         loss = loss + kl_coef * kl
         out["approx_kl"] = kl.detach()
     if entropy is not None and entropy_coef > 0:
-        ent = entropy.to(new.device, new.dtype).reshape(-1).mean()
+        ent = entropy.to(new.device, new.dtype).mean()
         loss = loss - entropy_coef * ent
         out["entropy"] = ent.detach()
     out["loss"] = loss

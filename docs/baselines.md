@@ -1,7 +1,8 @@
 # Baselines and evaluation protocol
 
-*Status (2026-11-23): **protocol not yet reproduced** for LIBERO. No baseline number in this file
-may be quoted as a reproduction until the gap in §3 is closed.*
+*Status (2026-11-23): LIBERO-Spatial within ~5 pts of the published number with the canonical
+simulator stack and a 10-step execution horizon (§3); the protocol choice is pending sign-off.
+Full 4-suite × 3-seed runs not yet done.*
 
 ## 1. Software and hardware
 
@@ -55,7 +56,7 @@ Goal 92, Long 71, average 87.3.
 | local, tasks 4–5, render 256 instead of 360 | 2 × 20 | 25 % | resolution ruled out |
 | local, tasks 4–5, `HuggingFaceVLA/smolvla_libero` | 2 × 20 | 57.5 % | second public checkpoint, same gap |
 | **canonical Docker stack (MuJoCo 3.3.1, hf-libero 0.1.4)** | 10 × 20 | **66.0 %** (Wilson 59.2–72.2) | task 5: 0 % → 45 % |
-| canonical, `n_action_steps=10` (replan every 10) | 10 × 20 | *running* | |
+| **canonical, `n_action_steps=10` (replan every 10)** | 10 × 20 | **85.0 %** (Wilson 79.4–89.3) | task 4: 65 %, task 5: 75 % |
 
 Findings so far:
 1. **Simulator version matters** (+8.4 pts, one task 0 → 45 %). LIBERO must be evaluated
@@ -65,9 +66,13 @@ Findings so far:
 2. Ruled out: observation resolution, config drift (the checkpoint config is explicit
    for every field), our adapter (these runs use `lerobot-eval` directly), a single bad
    checkpoint.
-3. Remaining gap ≈ 24 pts. Next hypotheses, cheapest first: replanning frequency
-   (running), the dataset revision the checkpoint was trained on (not recorded),
-   re-training with the released recipe (`train sft --benchmark libero --policy smolvla`).
+3. **Execution horizon matters most** (+19 pts). Executing the full 50-step chunk open-loop
+   (the checkpoint's saved `n_action_steps`) gives 66 %; replanning every 10 steps gives 85 %,
+   within about 5 pts of the published 90 % (and the CI includes 89 %).
+4. **Integrity caveat.** `n_action_steps=10` was found by looking at success on
+   LIBERO-Spatial (seed 1000, 200 episodes), i.e. on evaluation episodes. Whatever value is
+   adopted must be fixed before any of our models is evaluated and used identically for every
+   method, and this selection must be disclosed. Pending decision.
 
 The full 6,000-episode LIBERO run and LIBERO-Plus are **on hold** until this is resolved.
 

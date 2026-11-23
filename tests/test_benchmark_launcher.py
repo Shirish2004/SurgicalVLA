@@ -20,7 +20,7 @@ def _train(**kw):
 def _eval(tmp_path, **kw):
     ns = argparse.Namespace(
         benchmark="libero", checkpoint="lerobot/smolvla_libero", revision="abc", name=None, out=str(tmp_path),
-        seeds=[1000], suites=None, tasks=None, server=False, dry_run=True,
+        seeds=[1000], suites=None, tasks=None, local=False, dry_run=True,
     )
     vars(ns).update(kw)
     return [" ".join(c) for c in bench.eval_cmds(ns, [])]
@@ -50,11 +50,13 @@ def test_smolvla_baselines_use_the_released_recipes():
     assert "train_robotwin_baseline.sh" in _train(policy="smolvla", benchmark="robotwin")[0]
 
 
-def test_libero_eval_runs_every_suite_then_aggregates(tmp_path):
+def test_libero_eval_runs_every_suite_in_the_canonical_image_then_aggregates(tmp_path):
     cmds = _eval(tmp_path)
     runs = [c for c in cmds if "eval_libero_baseline.py run" in c]
-    assert len(runs) == 4 and all("--env-type libero" in c for c in runs)
-    assert "aggregate" in cmds[-1] and not any("lerobot-env-server" in c for c in cmds)
+    assert len(runs) == 4 and all("--env-type libero" in c and "--server-endpoint" in c for c in runs)
+    assert "aggregate" in cmds[-1] and sum("lerobot-env-server" in c and "--stop" not in c for c in cmds) == 4
+    local = [c for c in _eval(tmp_path, local=True) if "eval_libero_baseline.py run" in c]
+    assert local and not any("--server-endpoint" in c for c in local)
 
 
 def test_libero_plus_uses_server_and_one_episode_per_variant(tmp_path):

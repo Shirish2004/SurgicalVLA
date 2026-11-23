@@ -48,7 +48,7 @@ python3 scripts/benchmark.py pipeline --libero-plus
 python3 scripts/benchmark.py pipeline --dry-run                 # just print the commands
 
 # evaluate any checkpoint (Hub id at a pinned revision, or a local training dir)
-python3 scripts/benchmark.py eval --benchmark libero --server \
+python3 scripts/benchmark.py eval --benchmark libero \
     --checkpoint lerobot/smolvla_libero --revision a24f1f380461b665158d52acd140152c79e8b36d
 
 # unmodified SmolVLA baselines with the released recipes

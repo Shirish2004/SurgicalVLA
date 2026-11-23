@@ -31,7 +31,7 @@ All evaluation goes through LeRobot's own integrations (`lerobot-eval`, or
 
 | Benchmark | Protocol | Command |
 |---|---|---|
-| LIBERO | LeRobot's canonical Docker image (`--server`); 4 suites (spatial, object, goal, 10) × 10 tasks × **all 50 benchmark init states** × 3 seeds (1000, 2000, 3000); the checkpoint's own `n_action_steps` (50); suite horizons 280/280/300/520; 10 settle steps; images rotated 180°; 8-D state | `python3 scripts/benchmark.py eval --benchmark libero --server --checkpoint lerobot/smolvla_libero --revision a24f1f38…` |
+| LIBERO | LeRobot's canonical Docker image (default; `--local` is not the protocol); 4 suites (spatial, object, goal, 10) × 10 tasks × **all 50 benchmark init states** × 3 seeds (1000, 2000, 3000); the checkpoint's own `n_action_steps` (50); suite horizons 280/280/300/520; 10 settle steps; images rotated 180°; 8-D state | `python3 scripts/benchmark.py eval --benchmark libero --checkpoint lerobot/smolvla_libero --revision a24f1f38…` |
 | LIBERO-Plus | every registered variant of the 4 perturbed suites (10,030), 1 episode each (upstream protocol), seed 1000 | `… eval --benchmark libero_plus …` |
 | RoboTwin 2.0 | 50 tasks × 100 episodes, **Easy** (demo_clean). LeRobot's integration hard-codes `task_config/demo_clean.yml`, so Hard (demo_randomized) is not available yet | `… eval --benchmark robotwin …` |
 | VLABench | 21 primitive + 22 composite tasks × 10 episodes × 3 seeds (VLABench paper protocol) | `… eval --benchmark vlabench …` |
@@ -59,7 +59,7 @@ Goal 92, Long 71, average 87.3.
 
 Findings so far:
 1. **Simulator version matters** (+8.4 pts, one task 0 → 45 %). LIBERO must be evaluated
-   with LeRobot's canonical image (`--server`); the local `sim-eval` env resolves newer
+   with LeRobot's canonical image (the launcher default); the local `sim-eval` env resolves newer
    MuJoCo / hf-libero than LeRobot pins. *Action:* the launcher's LIBERO default should
    become the canonical image once the remaining gap is understood.
 2. Ruled out: observation resolution, config drift (the checkpoint config is explicit

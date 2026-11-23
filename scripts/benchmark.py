@@ -16,12 +16,13 @@ Every benchmark has its own model, configs and outputs:
 
 ``--dry-run`` prints the commands; arguments after ``--`` go to the trainer / lerobot-eval.
 
-Simulators: LIBERO runs locally (``sim-eval`` env); RoboTwin and VLABench (and
-LIBERO-Plus) run in LeRobot's canonical Docker images behind ``lerobot-env-server``,
-started and stopped here, for both RL rollouts and evaluation.
+Simulators: evaluation always uses LeRobot's canonical Docker images behind
+``lerobot-env-server`` (started and stopped here); ``--local`` runs LIBERO in the
+``sim-eval`` env instead, which resolves newer simulator versions and is not the protocol.
+RL rollouts on LIBERO run locally; RoboTwin and VLABench rollouts use the Docker images.
 
 Evaluation protocols (docs/baselines.md):
-* libero       4 suites x 10 tasks x 50 init states x 3 seeds
+* libero       4 suites x 10 tasks x 50 init states x 3 seeds, checkpoint's n_action_steps (50)
 * libero_plus  every registered variant of the 4 perturbed suites, 1 episode each
 * robotwin     50 tasks x 100 episodes, Easy (LeRobot's integration hard-codes demo_clean)
 * vlabench     21 primitive + 22 composite tasks x 10 episodes x 3 seeds (VLABench paper protocol)
@@ -181,7 +182,7 @@ def eval_cmds(args, extra: list[str]) -> list[list[str]]:
                    "--suites", suite, "--env-type", b]
             if b == "libero_plus":  # upstream protocol: one episode per registered variant
                 run += ["--n-episodes", "1", "--batch-size", "1"]
-            if b == "libero_plus" or args.server:
+            if b == "libero_plus" or not args.local:
                 run += ["--server-endpoint", ENDPOINT]
                 cmds += served(b, suite, out, [pixi("sim-eval", *run, *extra)])
             else:
@@ -227,7 +228,7 @@ def pipeline(args, extra: list[str]) -> None:
             targets = [b, "libero_plus"] if b == "libero" and args.libero_plus else [b]
             for target in targets:
                 ev = ns(benchmark=target, checkpoint=f"outputs/{b}/{stage}", revision=None, name=f"surgicalvla_{stage}",
-                        out=None, seeds=None, suites=None, tasks=None, server=False)
+                        out=None, seeds=None, suites=None, tasks=None, local=False)
                 if args.dry_run and not (ROOT / f"outputs/{b}/{stage}").exists():
                     print(f"# (eval of outputs/{b}/{stage} once it exists)")
                 execute(eval_cmds(ev, []), args.dry_run)
@@ -259,7 +260,7 @@ def main() -> None:
     e.add_argument("--seeds", nargs="+", type=int)
     e.add_argument("--suites", nargs="+")
     e.add_argument("--tasks", nargs="+")
-    e.add_argument("--server", action="store_true", help="LIBERO: use LeRobot's canonical Docker image")
+    e.add_argument("--local", action="store_true", help="LIBERO: local simulator instead of LeRobot's canonical image (not the protocol)")
     e.add_argument("--dry-run", action="store_true")
 
     p = sub.add_parser("pipeline")

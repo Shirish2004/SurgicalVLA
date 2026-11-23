@@ -82,7 +82,7 @@ Suite: **72 passed** (pre-audit: 62 passed, 2 failed). One commit per fix, on to
 | A17 | M | `full_vlm_layers_for_cot` was a no-op | Removed (the linear-probe issue remains, see limitations) |
 | A22 | **C** | LIBERO adapter sent a 7-D state tiled to 8-D (dim 6 ≈ 70σ out of distribution) | 8-D LeRobot state, image flip, settle steps; equality test against LeRobot's `LiberoEnv` |
 | A23 | H | SFT checkpoints were saved without their normaliser (not evaluable by `lerobot-eval`) | Processors saved with every checkpoint |
-| A24 | H | Local LIBERO stack (MuJoCo 3.8.1) differs from LeRobot's canonical one (3.3.1): −8 pts on Spatial, one task 45 % → 0 % | Evaluate LIBERO in the canonical image (`--server`); see `docs/baselines.md` |
+| A24 | H | Local LIBERO stack (MuJoCo 3.8.1) differs from LeRobot's canonical one (3.3.1): −8 pts on Spatial, one task 45 % → 0 % | Evaluate LIBERO in the canonical image (the launcher default); see `docs/baselines.md` |
 | A25 | M | RL only possible on LIBERO (custom socket bridge) | Generic LeRobot rollout client: RL on LIBERO, RoboTwin, VLABench |
 
 ### 2.3 Open — to fix next (ordered by priority)

@@ -580,26 +580,61 @@ def test_kv_cache_parity():
     torch.testing.assert_close(cached, full, rtol=1e-4, atol=1e-4)
 
 
+def _objects_and_args(model, batch):
+    objects = model.object_features(
+        batch["state"], batch["obj_sam_feat"], batch["obj_pose_vec"], batch["obj_valid_mask"]
+    )
+    return objects, (batch["images"], batch["img_masks"], batch["lang_tokens"], batch["lang_masks"], batch["state"])
+
+
 def test_generate_cot_batch_is_consistent():
     cfg = make_config(cot_max_tokens=4)
     model = make_model(cfg)
     batch = make_batch(cfg, bsize=3)
-    prefix = model.embed_prefix(
-        batch["images"],
-        batch["img_masks"],
-        batch["lang_tokens"],
-        batch["lang_masks"],
-        batch["state"],
-        object_tokens=model.object_features(
-            batch["state"], batch["obj_sam_feat"], batch["obj_pose_vec"], batch["obj_valid_mask"]
-        ).tokens,
-    )
-    out = model.generate_cot(prefix[0], prefix[1], 3)
+    objects, args = _objects_and_args(model, batch)
+    out = model.generate_cot(*args, objects)
     assert out is not None
     ids, mask, positions = out
-    assert ids.shape[0] == 3 and ids.shape[1] <= cfg.cot_max_tokens
+    assert ids.shape[0] == 3 and ids.shape[1] <= len(model._cot_prompt_ids) + cfg.cot_max_tokens
     assert mask.shape == ids.shape
     assert positions is None or positions.shape == (3,)
+
+
+def test_generated_cot_matches_teacher_forced_training_logits():
+    """Audit A16: decoding uses the training attention pattern, so the training-path
+    logits at every CoT position re-predict exactly the tokens that were generated."""
+    cfg = make_config(cot_max_tokens=5)
+    model = make_model(cfg)
+    batch = make_batch(cfg)
+    objects, args = _objects_and_args(model, batch)
+    with torch.no_grad():
+        ids, mask, _ = model.generate_cot(*args, objects)
+        prefix = model.prepare_prefix(*args, objects, cot_ids=ids, cot_mask=mask, use_cache=False)
+        start, end = prefix.cot_slice
+        logits = model.cot_lm_head(prefix.out[:, start:end])
+    n_prompt = len(model._cot_prompt_ids)
+    # logits at position t predict token t+1 (training's shifted CE)
+    pred = logits[:, max(n_prompt - 1, 0) : -1].argmax(-1)
+    torch.testing.assert_close(pred, ids[:, max(n_prompt, 1) :])
+
+
+def test_sde_log_probs_mask_unexecuted_steps():
+    """Audit A9: masked + complement-masked log-probs add up to the unmasked total."""
+    cfg = make_config(use_reinflow=True)
+    model = make_model(cfg)
+    batch = make_batch(cfg)
+    objects, args = _objects_and_args(model, batch)
+    with torch.no_grad():
+        _, latents, _ = model.sample_actions_sde(*args, objects=objects, num_steps=3, action_dim=5)
+        prefix = model.prepare_prefix(*args, objects)
+        model._set_moe_context(prefix.e_phase, prefix.obj_context)
+        executed = torch.zeros(2, cfg.chunk_size, dtype=torch.bool)
+        executed[:, : cfg.chunk_size // 2] = True
+        full = model.compute_sde_log_probs(prefix, latents, 3, action_dim=5)
+        part = model.compute_sde_log_probs(prefix, latents, 3, action_dim=5, action_is_pad=~executed)
+        rest = model.compute_sde_log_probs(prefix, latents, 3, action_dim=5, action_is_pad=executed)
+    torch.testing.assert_close(part + rest, full, rtol=1e-5, atol=1e-4)
+    assert not torch.allclose(part, full)
 
 
 def test_expert_usage_matches_reported_layers():

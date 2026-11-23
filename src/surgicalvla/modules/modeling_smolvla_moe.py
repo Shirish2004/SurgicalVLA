@@ -361,76 +361,68 @@ class SmolVLAMoEModel(nn.Module):
     @torch.no_grad()
     def generate_cot(
         self,
-        prefix_embs: Tensor,
-        prefix_pad_masks: Tensor,
-        batch_size: int,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state: Tensor,
+        objects: ObjectFeatures,
     ) -> tuple[Tensor, Tensor, Tensor | None] | None:
+        """Greedy CoT decoding under exactly the training attention pattern (audit A16).
+
+        Each step re-embeds ``[images | text | objects | state | CoT so far]`` with
+        :meth:`embed_prefix` and runs it through ``vlm_with_expert`` with the same
+        ``make_att_2d_masks`` mask training uses (bidirectional perception block, causal
+        CoT), so the logits at step ``k`` are the teacher-forced training logits. The
+        previous decoder called the HF text model with a 1-D mask, i.e. a fully causal
+        prefix in which image tokens could not see the instruction. Re-encoding costs
+        ``cot_max_tokens`` VLM passes per refresh; System 2 runs every
+        ``cot_refresh_interval`` control steps, so this is off the action-chunk hot path.
+        """
         if not self.config.use_cot:
             return None
-        vlm = getattr(self.vlm_with_expert, "vlm", None)
-        text_model = getattr(getattr(vlm, "model", None), "text_model", None)
-        if text_model is None:
-            return None
-        device = prefix_embs.device
-        prompt = torch.tensor(self._cot_prompt_ids, dtype=torch.long, device=device)
-        prompt = prompt[None, :].expand(batch_size, -1) if prompt.numel() else None
-        embs = prefix_embs if prompt is None else torch.cat([prefix_embs, self._embed_text(prompt)], dim=1)
-        try:
-            embs = embs.to(dtype=text_model.get_input_embeddings().weight.dtype)
-        except AttributeError:
-            embs = embs.to(dtype=next(text_model.parameters()).dtype)
-        pad = prefix_pad_masks if prompt is None else torch.cat(
-            [prefix_pad_masks, torch.ones(batch_size, prompt.shape[1], dtype=torch.bool, device=device)], dim=1
-        )
-        pos = torch.cumsum(pad, dim=1) - 1
-        out = text_model(
-            inputs_embeds=embs,
-            attention_mask=pad.long(),
-            position_ids=pos,
-            past_key_values=_new_cache(),
-            use_cache=True,
-        )
-        hidden = out.last_hidden_state[:, -1]
-        cache = out.past_key_values
-        generated = []
-        phase_pos = None
+        bsize = state.shape[0]
+        device = state.device
+        ids = torch.tensor(self._cot_prompt_ids, dtype=torch.long, device=device)[None].expand(bsize, -1)
+        prompt_len = ids.shape[1]
         eos = getattr(self._tokenizer(), "eos_token_id", None)
-        stop_ids = torch.tensor(self._cot_stop_ids, dtype=torch.long, device=device) if self._cot_stop_ids else None
+        stop = self._cot_stop_ids
         phase_ids = torch.tensor(self._phase_token_ids, dtype=torch.long, device=device) if self._phase_token_ids else None
-        prompt_len = 0 if prompt is None else prompt.shape[1]
+        phase_pos = None
+        n_new = 0
         for step in range(self.config.cot_max_tokens):
+            embs, pad, att, cot_slice = self.embed_prefix(
+                images, img_masks, lang_tokens, lang_masks, state,
+                object_tokens=objects.tokens, object_token_mask=objects.token_mask,
+                cot_ids=ids if ids.shape[1] else None,
+            )
+            outputs, _ = self.vlm_with_expert.forward(
+                attention_mask=make_att_2d_masks(pad, att),
+                position_ids=torch.cumsum(pad, dim=1) - 1,
+                past_key_values=None,
+                inputs_embeds=[embs, None],
+                use_cache=False,
+            )
+            last = (cot_slice[1] if cot_slice is not None else pad.shape[1]) - 1
+            hidden = outputs[0][:, last]
             token = self.cot_lm_head(hidden.to(self.cot_lm_head.weight.dtype)).argmax(dim=-1)
-            generated.append(token)
+            ids = torch.cat([ids, token[:, None]], dim=1)
+            n_new += 1
             if phase_pos is None and phase_ids is not None:
                 match = (token[:, None] == phase_ids[None]).any(dim=1)
                 if bool(match.any()):
-                    phase_pos = torch.where(
-                        match, torch.full_like(token, prompt_len + step), torch.full_like(token, -1)
-                    )
+                    phase_pos = torch.where(match, torch.full_like(token, prompt_len + step), torch.full_like(token, -1))
             if eos is not None and bool((token == eos).all()):
                 break
-            if stop_ids is not None and len(generated) >= len(self._cot_stop_ids):
-                recent = torch.stack(generated[-len(self._cot_stop_ids) :], dim=1)
-                if bool((recent == stop_ids[None]).all(dim=1).all()):
+            if stop and n_new >= len(stop):
+                recent = ids[:, -len(stop):]
+                if bool((recent == torch.tensor(stop, device=device)[None]).all()):
                     break
-            pad = torch.cat([pad, torch.ones(batch_size, 1, dtype=torch.bool, device=device)], dim=1)
-            pos = pos[:, -1:] + 1
-            out = text_model(
-                inputs_embeds=self._embed_text(token[:, None]),
-                attention_mask=pad.long(),
-                position_ids=pos,
-                past_key_values=cache,
-                use_cache=True,
-            )
-            hidden = out.last_hidden_state[:, -1]
-            cache = out.past_key_values
-        if not generated:
+        if n_new == 0:
             return None
-        gen = torch.stack(generated, dim=1)
-        cot_ids = gen if prompt is None else torch.cat([prompt, gen], dim=1)
-        cot_mask = torch.ones(cot_ids.shape, dtype=torch.bool, device=device)
+        mask = torch.ones(ids.shape, dtype=torch.bool, device=device)
         positions = None if phase_pos is None else phase_pos.clamp_min(prompt_len)
-        return cot_ids, cot_mask, positions
+        return ids, mask, positions
 
     @property
     def cot_inference_enabled(self) -> bool:
@@ -455,16 +447,7 @@ class SmolVLAMoEModel(nn.Module):
         use_cache: bool | None = None,
     ) -> PrefixState:
         if self.config.use_cot and cot_ids is None and refresh_cot and self.cot_inference_enabled:
-            base, base_pad, _, _ = self.embed_prefix(
-                images,
-                img_masks,
-                lang_tokens,
-                lang_masks,
-                state,
-                object_tokens=objects.tokens,
-                object_token_mask=objects.token_mask,
-            )
-            generated = self.generate_cot(base, base_pad, state.shape[0])
+            generated = self.generate_cot(images, img_masks, lang_tokens, lang_masks, state, objects)
             if generated is not None:
                 self._cot_cache = generated
         if cot_ids is None and self.config.use_cot and self.cot_inference_enabled:
@@ -1005,7 +988,8 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
     def expert_usage(self) -> dict[int, Tensor]:
         return self.model.expert_usage()
 
-    def sample_actions_sde(self, batch: dict[str, Tensor], num_steps: int = 5, generator=None):
+    def sample_actions_sde(self, batch: dict[str, Tensor], num_steps: int = 5, generator=None, return_cot: bool = False):
+        """SDE rollout. With ``return_cot`` also returns the CoT that conditioned it (replayed in the update, A8)."""
         self.eval()
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
@@ -1023,30 +1007,55 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
             generator=generator,
             refresh_cot=self._should_refresh_cot(),
         )
-        return final[:, :, :action_dim], latents, log_probs
+        out = (final[:, :, :action_dim], latents, log_probs)
+        return (*out, self.model._cot_cache if self.model.cot_inference_enabled else None) if return_cot else out
 
-    def sde_log_probs(self, batch: dict[str, Tensor], latents: Tensor, num_steps: int = 5, return_entropy: bool = False):
+    def sde_log_probs(
+        self,
+        batch: dict[str, Tensor],
+        latents: Tensor,
+        num_steps: int = 5,
+        return_entropy: bool = False,
+        action_is_pad: Tensor | None = None,
+        cot: tuple | None = None,
+    ):
+        """Replay log-probs of recorded SDE latents.
+
+        ``action_is_pad`` masks chunk steps that were not executed (A9): they never reach
+        the environment, so their noise carries no reward signal. ``cot`` is the CoT
+        recorded at rollout time (A8); without it the prefix is built CoT-free, never from
+        whatever happens to be cached now.
+        """
         was_training = self.model.obj_projector.training
         self.model.obj_projector.eval()
         try:
             images, img_masks = self.prepare_images(batch)
             state = self.prepare_state(batch)
             objects = self._objects(batch)
-            prefix = self.model.prepare_prefix(
-                images,
-                img_masks,
-                batch[OBS_LANGUAGE_TOKENS],
-                batch[OBS_LANGUAGE_ATTENTION_MASK],
-                state,
-                objects,
-                use_cache=True,
-            )
+            cot_ids, cot_mask, cot_pos = (None, None, None) if cot is None else (t if t is None else t.to(state.device) for t in cot)
+            cached, self.model._cot_cache = self.model._cot_cache, None  # never replay a stale cache
+            try:
+                prefix = self.model.prepare_prefix(
+                    images,
+                    img_masks,
+                    batch[OBS_LANGUAGE_TOKENS],
+                    batch[OBS_LANGUAGE_ATTENTION_MASK],
+                    state,
+                    objects,
+                    cot_ids=cot_ids,
+                    cot_mask=cot_mask,
+                    cot_phase_positions=cot_pos,
+                    use_cache=True,
+                )
+            finally:
+                self.model._cot_cache = cached
             self.model._set_moe_context(prefix.e_phase, prefix.obj_context)
             return self.model.compute_sde_log_probs(
                 prefix,
                 latents.to(state.device),
                 num_steps,
                 action_dim=self.config.action_feature.shape[0],
+                action_is_pad=None if action_is_pad is None else action_is_pad.to(state.device),
                 return_entropy=return_entropy,
             )
         finally:
@@ -1085,15 +1094,6 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
             state = base.model.state_dict()
         policy.moe_load_report = policy.model.load_smolvla_state(state)
         return policy
-
-
-def _new_cache():
-    try:
-        from transformers import DynamicCache
-
-        return DynamicCache()
-    except Exception:  # transformers not installed (unit-test stubs provide their own)
-        return None
 
 
 __all__ = ["PrefixState", "SmolVLAMoEModel", "SmolVLAMoEPolicy"]

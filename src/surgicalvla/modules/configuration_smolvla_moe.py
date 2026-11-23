@@ -33,7 +33,6 @@ class SmolVLAMoEConfig(SmolVLAConfig):
     cot_loss_weight: float = 0.1
     cot_prompt: str = "<cot> phase:"
     cot_stop: str = "</cot>"
-    full_vlm_layers_for_cot: bool = True
     # Number of leading VLM layers whose K/V the action expert cross-attends to.
     # SmolVLA pairs expert layer i with VLM layer i (``get_model_layers``), so any value
     # below ``num_vlm_layers`` silently skips expert layers and breaks the pretrained

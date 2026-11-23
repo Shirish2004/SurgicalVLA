@@ -61,3 +61,6 @@ datasets/
 credentials*.json
 .netrc
 .claude/settings.local.json
+
+# Pseudo-label sidecar stores (regenerable; large)
+/pseudolabels/

@@ -2,10 +2,9 @@
 
 ``lerobot/smolvla_libero`` was trained on ``lerobot/libero`` whose
 ``observation.state`` is LeRobot's 8-D LIBERO state: end-effector position (3),
-axis-angle (3), the two finger joints (2). The adapter used to send a 7-D state
-(gripper *openness* in [-1, 1]) and tile it to 8-D, i.e.
-``[pos, axis-angle, openness, pos_x]``: dim 6 lands ~70 sigma outside the
-training distribution for an open gripper.
+axis-angle (3), the two finger joints (2). A 7-D state (gripper *openness* in
+[-1, 1]) tiled to 8-D, i.e. ``[pos, axis-angle, openness, pos_x]``, puts dim 6
+about 70 sigma outside the training distribution for an open gripper.
 
 * ``test_policy_state_*``: selection logic, no simulator needed.
 * ``test_adapter_matches_lerobot_libero_env``: our server's observation equals

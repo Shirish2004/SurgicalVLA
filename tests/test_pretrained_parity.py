@@ -1,7 +1,7 @@
 """Regression tests against the real ``lerobot/smolvla_base`` checkpoint (audit A1, A2).
 
 The stub backbone in ``test_smolvla_moe.py`` cannot exercise SmolVLA's VLM/expert
-layer pairing, which is where audit bug A1 lived. These tests load the real weights
+layer pairing (an expert layer per VLM layer). These tests load the real weights
 and check that the up-cycled policy is *function-preserving* at initialisation:
 every routed expert starts with a zero down-projection, so with no object/CoT
 inputs it must reproduce ``SmolVLAPolicy`` actions for the same noise.

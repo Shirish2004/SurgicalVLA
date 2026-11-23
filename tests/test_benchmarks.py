@@ -1,4 +1,4 @@
-"""Audit A10: RL setups must live entirely in one benchmark's state/action space."""
+"""RL setups must live entirely in one benchmark's state/action space."""
 
 from __future__ import annotations
 
@@ -66,8 +66,8 @@ def test_robotwin_stays_14d():
         validate_rl_setup(ROBOTWIN, **GOOD)  # a LIBERO policy in RoboTwin
 
 
-def test_pre_audit_config_is_rejected():
-    """The exact pre-fix setup: RoboTwin aloha checkpoint + stats, sliced to 7-D, on LIBERO."""
+def test_cross_benchmark_setup_is_rejected():
+    """A RoboTwin aloha checkpoint and stats, sliced to 7-D, on LIBERO: rejected for every reason."""
     with pytest.raises(BenchmarkMismatch) as err:
         validate_rl_setup(
             LIBERO,
@@ -122,7 +122,7 @@ def test_libero_rl_config_is_valid_for_the_libero_reference_checkpoint():
 
 
 def test_every_benchmark_rl_config_matches_its_contract():
-    """Each benchmark's RL config stays in that benchmark's space (A10)."""
+    """Each benchmark's RL config stays in that benchmark's space."""
     for bench in ("libero", "robotwin", "vlabench"):
         cfg = yaml.safe_load((ROOT / "configs" / "benchmarks" / bench / "rl.yaml").read_text())
         spec = get_benchmark(cfg["benchmark"])

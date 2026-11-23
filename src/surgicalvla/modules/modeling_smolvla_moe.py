@@ -153,9 +153,9 @@ class SmolVLAMoEModel(nn.Module):
         self._moe_layers = self._upcycle_expert_ffns()
         self._cot_cache: tuple[Tensor, Tensor, Tensor | None] | None = None
         # Number of optimisation steps that carried CoT supervision. Inference only
-        # decodes CoT once this is > 0 (audit A4): a model fit without CoT tokens in its
-        # prefix must not be fed untrained LM-head output at test time. Persistent, so
-        # it survives save/load; checkpoints from before this field load it as 0.
+        # decodes CoT once this is > 0: a model fit without CoT tokens in its prefix must
+        # not be fed untrained LM-head output at test time. Persistent, so it survives
+        # save/load; checkpoints without this buffer load it as 0.
         self.register_buffer("cot_trained_steps", torch.zeros((), dtype=torch.long), persistent=True)
         self._cot_step = 0
         self.rtc_processor = rtc_processor
@@ -262,7 +262,7 @@ class SmolVLAMoEModel(nn.Module):
 
         # Drop the object slots when no sample in the batch has a valid object: fully
         # masked tokens are mathematically inert but change the sequence length, which
-        # changes bf16 kernel accumulation and broke exact parity with smolvla_base (A2).
+        # changes bf16 kernel accumulation and with it exact parity with smolvla_base.
         if object_tokens is not None and object_token_mask is not None and not bool(object_token_mask.any()):
             object_tokens = None
         if object_tokens is not None:
@@ -368,14 +368,13 @@ class SmolVLAMoEModel(nn.Module):
         state: Tensor,
         objects: ObjectFeatures,
     ) -> tuple[Tensor, Tensor, Tensor | None] | None:
-        """Greedy CoT decoding under exactly the training attention pattern (audit A16).
+        """Greedy CoT decoding under exactly the training attention pattern.
 
         Each step re-embeds ``[images | text | objects | state | CoT so far]`` with
         :meth:`embed_prefix` and runs it through ``vlm_with_expert`` with the same
         ``make_att_2d_masks`` mask training uses (bidirectional perception block, causal
-        CoT), so the logits at step ``k`` are the teacher-forced training logits. The
-        previous decoder called the HF text model with a 1-D mask, i.e. a fully causal
-        prefix in which image tokens could not see the instruction. Re-encoding costs
+        CoT), so the logits at step ``k`` are the teacher-forced training logits. A plain
+        causal decoder would instead hide the instruction from the image tokens. Re-encoding costs
         ``cot_max_tokens`` VLM passes per refresh; System 2 runs every
         ``cot_refresh_interval`` control steps, so this is off the action-chunk hot path.
         """
@@ -504,8 +503,8 @@ class SmolVLAMoEModel(nn.Module):
     def sample_time(self, bsize: int, device) -> Tensor:
         """Flow time exactly as SmolVLA pretraining drew it: 0.999 * Beta(1.5, 1) + 0.001.
 
-        Audit A3: a uniform draw puts less mass near the noise end (t -> 1) than the
-        pretrained velocity field was fit on.
+        A uniform draw would put less mass near the noise end (t -> 1) than the pretrained
+        velocity field was fit on.
         """
         return sample_time_beta(bsize, device, alpha=1.5, beta=1.0, scale=0.999, offset=0.001)
 
@@ -989,7 +988,7 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
         return self.model.expert_usage()
 
     def sample_actions_sde(self, batch: dict[str, Tensor], num_steps: int = 5, generator=None, return_cot: bool = False):
-        """SDE rollout. With ``return_cot`` also returns the CoT that conditioned it (replayed in the update, A8)."""
+        """SDE rollout. With ``return_cot`` also returns the CoT that conditioned it (replayed in the update)."""
         self.eval()
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
@@ -1021,10 +1020,10 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
     ):
         """Replay log-probs of recorded SDE latents.
 
-        ``action_is_pad`` masks chunk steps that were not executed (A9): they never reach
-        the environment, so their noise carries no reward signal. ``cot`` is the CoT
-        recorded at rollout time (A8); without it the prefix is built CoT-free, never from
-        whatever happens to be cached now.
+        ``action_is_pad`` masks chunk steps that were not executed: they never reach the
+        environment, so their noise carries no reward signal. ``cot`` is the CoT recorded
+        at rollout time; without it the prefix is built CoT-free, never from whatever
+        happens to be cached now.
         """
         was_training = self.model.obj_projector.training
         self.model.obj_projector.eval()

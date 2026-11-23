@@ -44,9 +44,7 @@ def compute_handover_reward(
 
     ``shaped = w_p exp(-|p - p*| / s_p) + w_r exp(-theta / s_r)`` with ``theta`` the
     SO(3) geodesic angle, so ``0 <= shaped <= w_p + w_r`` and it *increases* as the
-    object approaches the target, for successes and failures alike. (Audit A5: the
-    previous version subtracted ``shaped`` on failure, so a failed rollout that got
-    closer to the target was rewarded *less*.) ``success_reward`` must exceed the
+    object approaches the target, for successes and failures alike. ``success_reward`` must exceed the
     maximum shaping so that no failure can out-rank a success inside a GRPO group.
     """
     if success_reward <= position_weight + orientation_weight:
@@ -95,10 +93,9 @@ def grpo_surrogate(
     ``ratio_level="step"`` (default) uses one importance ratio per SDE transition,
     ``r_{k,b} = pi(x_{k+1}|x_k) / pi_old(x_{k+1}|x_k)``, and averages the clipped
     terms over ``(k, b)``, as in Flow-GRPO (per denoising step) and SimpleVLA-RL
-    (per token). ``"sequence"`` uses the product over steps. Audit A6: the
-    sequence ratio's log is a sum of ``K*T*D`` Gaussian terms, so its variance is
-    ``K`` times the per-step one; in practice almost every sample is clipped and
-    the gradient vanishes. Both levels have the same first-order gradient at
+    (per token). ``"sequence"`` uses the product over steps, whose log is a sum of
+    ``K*T*D`` Gaussian terms with ``K`` times the per-step variance, so almost every
+    sample is clipped and the gradient vanishes. Both levels have the same first-order gradient at
     ``ratio = 1``; they differ in how quickly clipping engages.
     """
     if ratio_level not in ("step", "sequence"):

@@ -601,7 +601,7 @@ def test_generate_cot_batch_is_consistent():
 
 
 def test_generated_cot_matches_teacher_forced_training_logits():
-    """Audit A16: decoding uses the training attention pattern, so the training-path
+    """Decoding uses the training attention pattern, so the training-path
     logits at every CoT position re-predict exactly the tokens that were generated."""
     cfg = make_config(cot_max_tokens=5)
     model = make_model(cfg)
@@ -619,7 +619,7 @@ def test_generated_cot_matches_teacher_forced_training_logits():
 
 
 def test_sde_log_probs_mask_unexecuted_steps():
-    """Audit A9: masked + complement-masked log-probs add up to the unmasked total."""
+    """Masked + complement-masked log-probs add up to the unmasked total."""
     cfg = make_config(use_reinflow=True)
     model = make_model(cfg)
     batch = make_batch(cfg)
@@ -731,7 +731,7 @@ def test_load_smolvla_state_upcycles_dense_weights():
 
 
 def test_flow_time_matches_smolvla_beta_schedule():
-    """Audit A3: training time must follow SmolVLA's 0.999*Beta(1.5,1)+0.001, not U(0,1)."""
+    """Training time follows SmolVLA's 0.999*Beta(1.5,1)+0.001, not U(0,1)."""
     model = make_model(make_config())
     torch.manual_seed(0)
     t = model.sample_time(200_000, "cpu")
@@ -741,7 +741,7 @@ def test_flow_time_matches_smolvla_beta_schedule():
 
 
 def test_cot_not_generated_until_cot_supervised():
-    """Audit A4: an untrained CoT head must not inject tokens into the inference prefix."""
+    """An untrained CoT head must not inject tokens into the inference prefix."""
     cfg = make_config(cot_max_tokens=3)
     model = make_model(cfg)
     batch = make_batch(cfg)

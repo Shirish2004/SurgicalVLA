@@ -19,7 +19,7 @@ project:
 # (config.json + model.safetensors); the processor pipelines are rebuilt here
 # from `stats`, because checkpoints do not carry dataset statistics.
 # The checkpoint, its stats and the simulator must belong to one benchmark
-# (src/surgicalvla/rl/benchmarks.py, audit A10). The checkpoints*/ in this repo were
+# (src/surgicalvla/rl/benchmarks.py). The checkpoints*/ in this repo were
 # trained on RoboTwin (14-D joint space) and are rejected for LIBERO.
 benchmark: libero
 checkpoint: null                # a LIBERO-SFT SurgicalVLA checkpoint (none trained yet)

@@ -35,8 +35,7 @@ class SmolVLAMoEConfig(SmolVLAConfig):
     cot_stop: str = "</cot>"
     # Number of leading VLM layers whose K/V the action expert cross-attends to.
     # SmolVLA pairs expert layer i with VLM layer i (``get_model_layers``), so any value
-    # below ``num_vlm_layers`` silently skips expert layers and breaks the pretrained
-    # function (audit A1: 8/16 expert layers ran, actions off by 152% vs smolvla_base).
+    # below ``num_vlm_layers`` would skip expert layers and break the pretrained function.
     # Only the full depth is valid; ``0``/``-1`` resolve to it. Kept for config round-trip.
     expert_cross_attn_vlm_layers: int = 0
 

@@ -1,11 +1,11 @@
 """Benchmark contracts: a policy may only be rolled out in the space it was trained in.
 
-Audit A10: the RL configs ran a RoboTwin (aloha, 14-D joint-position) checkpoint
-with RoboTwin normalisation stats in LIBERO (7-D end-effector deltas), slicing
-actions ``[0:7]`` and feeding ``agentview`` into two camera slots. Nothing about
-that run was interpretable. :func:`validate_rl_setup` makes the combination
-impossible to configure: the state/action layout, normalisation statistics and
-cameras must all belong to the benchmark the simulator implements.
+A RoboTwin (aloha, 14-D joint-position) policy rolled out in LIBERO (7-D
+end-effector deltas) by slicing its actions, or fed the wrong normalisation or a
+duplicated camera, produces numbers that mean nothing. :func:`validate_rl_setup`
+makes such combinations impossible to configure: the state/action layout,
+normalisation statistics and cameras must all belong to the benchmark the simulator
+implements.
 """
 
 from __future__ import annotations

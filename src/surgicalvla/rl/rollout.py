@@ -15,13 +15,10 @@ already what ``policy.forward`` wants as ``batch["action"]``. Feeding the
 post-processed *real* actions back in would silently train on a different
 distribution. Real simulator actions therefore only exist for ``env.step``.
 
-**The 7-D LIBERO observation is tiled into the checkpoint's 14-D layout.**
-The checkpoint was trained on a bimanual ALOHA-style dataset, so its state,
-action and gripper-dimension indices (``gripper_dims=[6, 13]``) are all 14-D
-while LIBERO's ``OSC_POSE`` interface is 7-D. Tiling the single arm into both
-halves keeps every index consistent (dim 6 and dim 13 become the same gripper)
-and is far less destructive than zero-padding, but it is still a projection of
-a bimanual space onto a single arm -- the RL stage has to learn through it.
+**The state is the one the policy was trained on.** :func:`policy_state` picks the
+simulator state whose layout matches the policy (LIBERO's 8-D LeRobot state for
+LIBERO-trained policies) and refuses to tile a narrower state into a wider one unless
+``lift_state=True`` asks for that projection explicitly.
 """
 
 from __future__ import annotations
@@ -33,7 +30,7 @@ import torch
 
 
 def lift(vector: np.ndarray | torch.Tensor, dim: int):
-    """Tile a ``(d,)`` vector up to ``dim`` so 7-D LIBERO fits the 14-D checkpoint."""
+    """Tile a ``(d,)`` vector up to ``dim`` (an explicit, lossy projection between layouts)."""
     vector = np.asarray(vector)
     if vector.shape[-1] == dim:
         return vector
@@ -52,9 +49,8 @@ def policy_state(obs, state_dim: int, *, lift_state: bool = False) -> np.ndarray
     * ``state_dim == len(obs.state)`` (7) -> the legacy OSC-style state.
     * anything else only with ``lift_state=True`` (tile, see :func:`lift`).
 
-    Previously the 7-D state was always tiled to ``state_dim``, so an 8-D policy
-    silently got ``[pos, axis-angle, openness, pos_x]`` instead of the two finger
-    joints -- an input it never saw in training.
+    Silent tiling of the 7-D state to 8-D would give ``[pos, axis-angle, openness,
+    pos_x]`` instead of the two finger joints, an input the policy never saw in training.
     """
     agent_pos = getattr(obs, "agent_pos", None)
     if state_dim == 8 and agent_pos is not None:
@@ -108,13 +104,14 @@ def env_action(
     gripper_dims: tuple[int, ...] = (6,),
     clip: float | None = 1.0,
 ) -> np.ndarray:
-    """One post-processed 14-D action -> the 7-D ``OSC_POSE`` action LIBERO takes.
+    """One post-processed policy action -> the action vector the simulator takes.
 
-    ``gripper_sign`` exists because the two conventions disagree: robosuite
-    closes on ``+1`` while the checkpoint's gripper convention (and the
-    simulator's own reported proprioceptive openness) is open on ``+1``. The
-    default flips it; if a run learns nothing, check this before blaming the
-    policy.
+    ``action_slice`` selects the dimensions sent (the benchmark configs always send the
+    whole vector), ``scale`` rescales them, and ``gripper_sign`` flips the gripper
+    dimensions for policies trained with the opposite open/close convention (robosuite
+    closes on ``+1``; LIBERO-trained policies already use that convention, so their
+    configs set ``+1``). ``clip`` bounds normalised delta actions (LIBERO, ``1.0``) and is
+    ``None`` for absolute joint or pose actions (RoboTwin, VLABench).
     """
     a = torch.as_tensor(action, dtype=torch.float32).detach().reshape(-1).cpu().numpy()
     lo, hi = action_slice
@@ -137,8 +134,8 @@ class ChunkRecord:
     advantage: float = 0.0
     latents: torch.Tensor | None = None
     log_probs: torch.Tensor | None = None
-    n_exec: int = 0  # chunk steps actually sent to the simulator (A9)
-    cot: tuple | None = None  # CoT that conditioned this chunk, replayed in the update (A8)
+    n_exec: int = 0  # chunk steps actually sent to the simulator
+    cot: tuple | None = None  # CoT that conditioned this chunk, replayed in the update
 
     def exec_pad(self) -> torch.Tensor:
         """``(1, T)`` mask of chunk steps that were *not* executed."""

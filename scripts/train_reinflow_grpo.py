@@ -66,7 +66,7 @@ def checkpoint_dataset_id(checkpoint: Path) -> str | None:
 
 
 def build_policy(cfg: dict, device: str) -> SmolVLAMoEPolicy:
-    """Load the SFT checkpoint and its normalisation, refusing cross-benchmark setups (A10)."""
+    """Load the SFT checkpoint and its normalisation, refusing cross-benchmark setups."""
     spec = get_benchmark(cfg.get("benchmark", ""))
     if env_section(cfg).get("backend", "lerobot") == "socket" and spec is not LIBERO:
         raise BenchmarkMismatch("the socket backend is the LIBERO bridge only; use backend: lerobot")
@@ -165,9 +165,8 @@ def _reward(cfg: dict, result) -> float:
 def rollout_group(policy, client, cfg, task, *, device, rng, frames=False) -> list:
     lc, rl = env_section(cfg), cfg["rl"]
     # GRPO's baseline is the mean over rollouts *from the same start*: one initial
-    # state per group, only the policy's SDE noise (and sim seed) varies inside it.
-    # Audit A7: drawing a fresh init state per member made the advantage measure
-    # layout difficulty instead of action quality.
+    # state per group, only the policy's SDE noise (and sim seed) varies inside it, so
+    # the advantage measures action quality rather than layout difficulty.
     init_state = int(rng.integers(0, max(1, task.n_init_states)))
     episodes = []
     for _ in range(int(rl["group_size"])):
@@ -273,7 +272,7 @@ def grpo_update(policy, reference, optimizer, pairs, cfg, *, clip_norm: float, d
         outs = []
         for record, adv in items:
             batch = {k: (v.to(policy.config.device) if torch.is_tensor(v) else v) for k, v in record.batch.items()}
-            # Only executed chunk steps carry reward signal (A9); replay the rollout's CoT (A8).
+            # Only executed chunk steps carry reward signal; replay the rollout's CoT.
             pad, cot = record.exec_pad(), record.cot
             kw = dict(num_steps=num_steps, action_is_pad=pad, cot=cot)
             with torch.no_grad():

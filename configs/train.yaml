@@ -79,7 +79,7 @@ smolvla_moe:
   moe_aux_loss_weight: 0.01
   phase_loss_weight: 0.1
   pose_aux_loss_weight: 0.2
-  expert_cross_attn_vlm_layers: 0  # must equal num_vlm_layers (0 -> all); see docs/audit.md A1
+  expert_cross_attn_vlm_layers: 0  # must equal num_vlm_layers (0 -> all)
   use_reinflow: false
 
 # Visual panels / CSV / routing-drift plots

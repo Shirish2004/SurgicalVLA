@@ -43,7 +43,7 @@ def test_handover_reward_success_and_shaping():
     assert compute_handover_reward(True, far, target) < perfect
     near_fail = compute_handover_reward(False, target, target)
     far_fail = compute_handover_reward(False, far, target)
-    # Audit A5: among failures, closer to the target must score higher,
+    # Among failures, closer to the target must score higher,
     # and no failure may out-rank any success.
     assert far_fail < near_fail < compute_handover_reward(True, far, target)
 
@@ -108,7 +108,7 @@ def test_gaussian_entropy_masks_padding():
 
 
 def test_step_ratio_has_lower_variance_than_sequence_ratio():
-    """Audit A6: per-step ratios clip far less often than the K-step product."""
+    """Per-step ratios clip far less often than the K-step product."""
     torch.manual_seed(0)
     k, b = 5, 4096
     old = torch.zeros(k, b)
@@ -132,7 +132,7 @@ def test_step_and_sequence_ratio_share_gradient_at_ratio_one():
 
 
 def test_grpo_group_shares_initial_state(monkeypatch):
-    """Audit A7: every member of a GRPO group starts from the same initial state."""
+    """Every member of a GRPO group starts from the same initial state."""
     from types import SimpleNamespace
 
     import numpy as np
@@ -160,7 +160,7 @@ def test_grpo_group_shares_initial_state(monkeypatch):
 
 
 def test_grpo_update_replays_exec_mask_and_rollout_cot():
-    """Audit A8/A9: old, new and reference log-probs all use the executed-step mask
+    """Old, new and reference log-probs all use the executed-step mask
     and the CoT recorded at rollout time."""
     from types import SimpleNamespace
 

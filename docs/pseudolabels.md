@@ -57,4 +57,14 @@ Speed-ups not yet applied: stride 4 (about half the time), a single end-effector
 running SAM 3 on the object prompts at a lower internal resolution, and the `kernels`
 package (better SAM 3 post-processing; may change speed either way).
 
-Quality against simulator ground truth is Step 2 (`docs/pseudolabel_quality.md`).
+Quality against simulator ground truth: `docs/pseudolabel_quality.md`. Tracking videos:
+`--save-videos <dir>` (target mask green, gripper box red, point tracks yellow).
+
+## Reasoning traces (`scripts/make_cot_traces.py`)
+
+Candidates per phase segment are written from the pseudo-labels, e.g.
+`<cot> phase: grasp | object: black bowl | motion: right </cot>`, and scored by the paired
+flow-matching-loss gain on the segment's middle frame. Measured with `lerobot/smolvla_libero` on
+2 episodes (19 segments): **every candidate had negative gain** (-0.01 to -0.35); a policy never
+trained with traces in its prefix treats them as distractors. Round 1 therefore runs with
+`--bootstrap` (unfiltered); filtering applies from round 2, scored by the trace-trained policy.

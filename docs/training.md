@@ -27,6 +27,34 @@ python3 scripts/benchmark.py pipeline --libero-plus --dry-run     # print every 
 Baselines (unmodified SmolVLA, LeRobot's trainer and the released recipes):
 `train sft --benchmark <b> --policy smolvla`.
 
+Architecture switches (`moe_variant`, `aux_vision`, `latent_cot`, `cot_curriculum_steps`) and
+the `aux:` sidecar section live in the SFT configs, all off by default (`docs/architecture.md`).
+`run.seed` seeds torch / numpy / random; `dataset.episodes` restricts SFT to an episode list
+(`scripts/libero_suite_episodes.py --suite libero_spatial` writes one).
+
+## Label-free auxiliary supervision
+
+```bash
+pixi run -e dev labels --suite libero_spatial --limit 3      # pseudo-labels, videos, bootstrap traces
+pixi run -e sim-eval python scripts/validate_pseudolabels.py --hdf5 <LIBERO demo file>   # quality vs sim GT
+# then train with e.g.  smolvla_moe.aux_vision=true aux.sidecar_root=pseudolabels
+```
+
+Reasoning traces follow R&B-EnCoRe's bootstrap: round 1 trains on unfiltered traces
+(`make_cot_traces.py --bootstrap`); round 2 re-scores them with the trace-trained policy and keeps
+only those that lower its flow-matching loss on the demonstrated actions.
+
+## Step-4 pilot
+
+```bash
+pixi run -e dev pilot --suite libero_spatial --steps 20000 --dry-run
+```
+
+Arms `baseline`, `vision_aux`, `cot_latent`, `cot_explicit`, `both` (and the MoE variants) are
+trained with identical steps, batch and data (the suite's 432 demonstrations) for seeds 0, 1, 2,
+then evaluated on that suite with the protocol settings. Gate order: oracle upper bound, this
+pilot, transfer to another dataset; stop at the first gate that fails.
+
 ## RL stage (ReinFlow-GRPO)
 
 `scripts/train_reinflow_grpo.py`. Per iteration: one task and one start state, `G` SDE
@@ -36,7 +64,11 @@ SFT reference and an entropy bonus on the learned noise scale. Log-probs cover o
 chunk steps that were executed, and the CoT active at rollout time is replayed.
 
 Rollouts use `src/surgicalvla/rl/lerobot_sim.py`, which builds the environment exactly as
-`lerobot-eval` does, so RL sees the evaluation observations. RoboTwin and VLABench run in
+`lerobot-eval` does, so RL sees the evaluation observations. LIBERO RL runs with
+`init_states: false`: layouts are sampled from each task's placement regions by seed, so RL never
+touches the 50 fixed init states per task that LIBERO evaluates on. Validation (every
+`env.val_suites` suite × `rl.val_tasks_per_suite` × `rl.val_episodes_per_task`, fixed seeds) only
+monitors training; the evaluated model is always `final/` after the fixed iteration budget. RoboTwin and VLABench run in
 LeRobot's Docker images; the launcher starts and stops the server. Every config is checked
 against its benchmark contract (`src/surgicalvla/rl/benchmarks.py`): state/action
 dimensions, action semantics, cameras and normalisation must all match.

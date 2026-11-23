@@ -2,20 +2,17 @@
 
 Read this before quoting a number or a claim. IDs refer to `docs/audit.md`.
 
-## Experimental: no training signal yet
-
-These branches exist in the model and run, but **no dataset provides their labels**, so
-they receive no supervision. They must not be claimed in the README or paper text until
-the label pipeline (decision pending, audit A18) exists and an ablation shows an effect.
+## Experimental: not yet validated by an ablation
 
 | Component | Status |
 |---|---|
-| Chain-of-thought (`use_cot`) | Decoder is correct (training attention pattern, A16) and gated off at inference until trained (A4). No CoT labels. With the frozen VLM it would be a linear probe on layer-16 features (A17). |
-| Phase head / phase-conditioned routing | Without CoT, `e_phase` is a learned constant, so the phase loss learns only the label marginal (A15). |
-| Object-centric 6-D tokens | Tracker runs in `passthrough` / mock mode in training; no object features in any dataset. |
-| Pose auxiliary loss | No `target_relative_pose_6d` labels. |
-
-What *does* train today: flow matching and the MoE load-balancing loss.
+| Auxiliary vision heads (`aux_vision`) | Trained from label-free pseudo-labels; mask/centroid/motion targets validated against simulator ground truth (`docs/pseudolabel_quality.md`); gripper-relative displacement is weak (low weight). No ablation yet. |
+| Latent CoT (`latent_cot`) | Trains end to end (EMA future-latent target). No ablation yet. |
+| Explicit CoT (`use_cot` + traces) | Traces come from pseudo-labels. Scored with a policy never trained on traces, every candidate *raises* the flow-matching loss, so round 1 must be unfiltered (bootstrap); filtering is untested until round 2. |
+| Explicit-to-latent curriculum | Implemented; no ablation yet. |
+| Phase head | Pseudo phase segments (gripper events + speed minima); grasp boundary is the gripper-close event, 0.5-0.75 s before lift. |
+| Object-centric 6-D tokens, pose auxiliary loss | No labels; off by default. 6-D pose is reserved for real-robot instruments with scanned meshes. |
+| MoE (`upcycled`, `matched`) | Compute- and parameter-matched baselines exist; no ablation yet. MoE inference is ~2x slower than dense at equal FLOPs (dispatch loop). |
 
 ## Fixed in the audit (with regression tests)
 
@@ -30,12 +27,10 @@ removed · LIBERO adapter 7-D state (now 8-D) · checkpoints saved without their
 
 | ID | Limitation | Plan |
 |---|---|---|
-| — | **LIBERO baseline not reproduced** (66 % vs ~90 % on Spatial with the canonical stack) | `docs/baselines.md` §3 |
-| A13 | MoE uses 3× the dense FFN FLOPs (1 shared + 2 of 4 full-width routed experts); a MoE-vs-dense claim is capacity-confounded | Compute-matched and param-matched dense ablations (task 3d) |
-| A14 | Routed experts start identical; symmetry broken only by the aux loss | Random row-sliced up-cycling |
-| A11 | RL validation is still a few episodes on a few tasks | Multi-suite validation (task 3e) |
-| A18 | No CoT / phase / pose / object labels | Options to be proposed; your pick |
+| A13/A14 | Up-cycled experts start identical and cost 3× dense; `matched` (distinct row-slices, 1× compute) and dense baselines now exist | Run the ablation |
+| — | Gripper-relative displacement pseudo-label is weak (cosine ~0.7) | Fingertip point tracks |
+| — | LIBERO protocol baseline is ~66 % on Spatial with the 50-step horizon (published ~90 %) | Documented in docs/baselines.md |
 | — | RoboTwin **Hard** setting unavailable (LeRobot's integration hard-codes demo_clean) | Patch the integration or run RoboTwin's own evaluator |
 | — | RoboTwin baseline is one multi-task policy, not 50 single-task policies as in the paper | Documented deviation (single GPU) |
-| — | Joint SFT+RL pilot not run | After the LIBERO protocol is reproduced |
+| — | Ablation pilots (architecture, joint vs sequential SFT+RL) not run | `pixi run -e dev pilot`; gates in `docs/training.md` |
 | A20 | SFT validation split is per episode; tasks overlap train/val | Task-level held-out split for generalisation claims |

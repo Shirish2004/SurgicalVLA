@@ -100,6 +100,20 @@ def resolve_resume_dir(resume_arg: str | bool | None, output_dir: str) -> str | 
     return resume_arg if isinstance(resume_arg, str) else None
 
 
+def build_aux_targets(cfg: dict, config, repo_id: str, tokenizer=None):
+    """Sidecar pseudo-label reader when the config enables auxiliary targets (``aux.sidecar_root``)."""
+    aux = cfg.get("aux") or {}
+    if not aux.get("sidecar_root") or not (getattr(config, "aux_vision", False) or aux.get("cot_traces")):
+        return None
+    from surgicalvla.pseudolabels.reader import SidecarTargets
+
+    return SidecarTargets(
+        aux["sidecar_root"], repo_id, feat_dim=config.aux_feat_dim,
+        track_horizon=int(aux.get("track_horizon", 5)), num_phases=config.num_phases,
+        tokenizer=tokenizer if aux.get("cot_traces") else None, cot_max_tokens=config.cot_max_tokens,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -235,6 +249,7 @@ def main():
         resume_from=resume_dir,
         grad_accum=run_cfg.get("grad_accum", 4),
         repo_id=args.repo_id,
+        aux_targets=build_aux_targets(cfg, config, args.repo_id, tokenizer=getattr(getattr(policy, "model", None), "_tokenizer", lambda: None)()),
     )
     trainer.fit()
 

@@ -21,7 +21,9 @@ stats:
 env:
   backend: lerobot                  # LeRobot make_env (as lerobot-eval); "socket" = legacy LIBERO bridge
   endpoint: null
-  env_kwargs: {observation_height: 360, observation_width: 360}
+  # init_states: false -> fresh layouts sampled from each task's placement regions (seeded).
+  # The 50 fixed init states per task are LIBERO's evaluation states: RL never uses them.
+  env_kwargs: {observation_height: 360, observation_width: 360, init_states: false}
   suite: "libero_10"
   tasks: null
   val_tasks: null
@@ -37,6 +39,7 @@ env:
   max_steps: 520
   max_decisions: 11
   frame_every: 5
+  val_suites: ["libero_spatial", "libero_object", "libero_goal", "libero_10"]   # null -> the training suite
 
 # Joint SFT + RL. sequential = RL only from the SFT checkpoint; joint = GRPO + lambda_t * FM
 # on a streamed demo batch; interleaved = sft_steps FM updates every interleave_every RL updates.
@@ -68,7 +71,8 @@ rl:
   orientation_weight: 0.3
   target_pose_6d: null
   val_seed: 1234
-  max_val_tasks: 4
+  val_tasks_per_suite: 10           # validation: every suite x tasks x episodes (distinct init states)
+  val_episodes_per_task: 2
   val_frames_per_task: 4
 
 run:

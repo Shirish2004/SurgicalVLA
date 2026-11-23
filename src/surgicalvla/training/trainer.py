@@ -14,6 +14,7 @@ from surgicalvla.utils.ema import EMA
 from surgicalvla.utils.logrun import ExperimentLogger
 from surgicalvla.utils.metrics import Accumulator, chunk_metrics
 from surgicalvla.utils.splits import strided_subset
+from surgicalvla.pseudolabels.reader import split_future_frames
 
 
 @lru_cache(maxsize=4)
@@ -80,6 +81,7 @@ class Trainer:
         resume_from: str | None = None,
         grad_accum: int = 4,
         repo_id: str | None = None,
+        aux_targets=None,
     ):
         self.grad_accum = grad_accum
         self.policy = policy.to(device)
@@ -96,6 +98,7 @@ class Trainer:
         self.use_amp = use_amp and str(device).startswith("cuda")
         self.repo_id = repo_id
 
+        self.aux_targets = aux_targets  # surgicalvla.pseudolabels.reader.SidecarTargets or None
         self.loader = DataLoader(
             dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers,
             pin_memory=True, drop_last=True, prefetch_factor=2, persistent_workers=False,
@@ -131,7 +134,13 @@ class Trainer:
         return {k: v.to(self.device, non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
 
     def _prep(self, raw: dict) -> dict:
-        return self._to_device(collapse_obs_history(self.preprocessor(raw)))
+        batch = self.preprocessor(raw)
+        if getattr(self.policy.config, "latent_cot", False):
+            batch = split_future_frames(batch, list(self.policy.config.image_features))
+        batch = collapse_obs_history(batch)
+        if self.aux_targets is not None and "episode_index" in raw and "frame_index" in raw:
+            batch.update(self.aux_targets.for_batch(raw["episode_index"], raw["frame_index"]))
+        return self._to_device(batch)
 
     def _cycle(self):
         while True:
@@ -238,6 +247,8 @@ class Trainer:
             )
             self.optimizer.step()
             self.scheduler.step()
+            if hasattr(self.policy, "update_ema"):
+                self.policy.update_ema()
             if self.ema is not None:
                 self.ema.update()
 

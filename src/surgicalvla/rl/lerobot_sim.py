@@ -9,9 +9,12 @@ Docker image behind ``lerobot-env-server`` (RoboTwin and VLABench need their own
 torch / simulator stacks and only run that way).
 
 GRPO groups share one start state:
-* LIBERO: the benchmark init state is set explicitly (``init_state_id``);
-* RoboTwin / VLABench: the scene is a function of the reset seed, so every
-  member of a group is reset with the same seed.
+* LIBERO with ``init_states=True``: the benchmark init state is set explicitly
+  (``init_state_id``). Those 50 states per task are the benchmark's *evaluation* states, so
+  RL configs use ``init_states=False``: LIBERO then samples a fresh layout from each task's
+  placement regions, determined by the reset seed, and never touches the evaluation states;
+* RoboTwin / VLABench (and LIBERO without init states): the scene is a function of the reset
+  seed, so every member of a group is reset with the same seed.
 """
 
 from __future__ import annotations
@@ -124,7 +127,7 @@ class LeRobotSimClient:
 
     def reset(self, suite: str, task: str, episode: int = 0, seed: int = 0) -> Observation:
         env = self._env(task)
-        if self.benchmark == "libero":
+        if self.benchmark == "libero" and (self.env_kwargs or {}).get("init_states", True):
             env.set_attr("init_state_id", int(episode))
             reset_seed = int(seed)
         else:

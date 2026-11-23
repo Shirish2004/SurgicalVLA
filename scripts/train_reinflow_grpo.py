@@ -199,39 +199,61 @@ def rollout_group(policy, client, cfg, task, *, device, rng, frames=False) -> li
 
 
 def evaluate(policy, client, cfg, tasks, *, device):
-    lc = env_section(cfg)
-    frames, successes, rewards, lengths = [], [], [], []
-    for task in tasks:
-        result = rollout_episode(
-            policy,
-            client,
-            suite=lc["suite"],
-            task=task.name,
-            camera_map=lc["camera_map"],
-            device=device,
-            episode=0,
-            seed=int(cfg["rl"].get("val_seed", 1234)),
-            n_exec_steps=int(lc["n_exec_steps"]),
-            max_steps=lc["max_steps"],
-            max_decisions=lc["max_decisions"],
-            action_slice=tuple(lc["action_slice"]),
-            action_scale=float(lc["action_scale"]),
-            gripper_sign=float(lc["gripper_sign"]),
-            env_gripper_dims=tuple(lc["env_gripper_dims"]),
-            action_clip=lc.get("action_clip", 1.0),
-            frame_every=int(lc["frame_every"]),
-            collect=False,
-        )
-        successes.append(float(result.success))
-        rewards.append(_reward(cfg, result))
-        lengths.append(float(result.steps))
-        if result.frames:
-            frames.extend(result.frames[: int(cfg["rl"].get("val_frames_per_task", 4))])
-    return {
-        "rl/val_success_rate": float(np.mean(successes)) if successes else 0.0,
-        "rl/val_reward": float(np.mean(rewards)) if rewards else 0.0,
-        "rl/val_episode_len": float(np.mean(lengths)) if lengths else 0.0,
-    }, frames
+    """Deterministic validation over every configured suite (monitoring only).
+
+    The model that is evaluated on the benchmark is always ``final/`` after the fixed iteration
+    budget; validation success never selects a checkpoint. With LIBERO's ``init_states: false``
+    the validation layouts are sampled from fixed seeds and are disjoint from the benchmark's
+    evaluation init states.
+
+    ``env.val_suites`` (default: the training suite) x up to ``rl.val_tasks_per_suite`` tasks
+    x ``rl.val_episodes_per_task`` episodes on distinct, fixed init states (episode ``e`` uses
+    init state ``e`` and seed ``val_seed + e``), so iterations are comparable. ``tasks`` is the
+    training suite's task list, reused when the suite is validated.
+    """
+    lc, rl = env_section(cfg), cfg["rl"]
+    suites = lc.get("val_suites") or [lc["suite"]]
+    n_tasks = int(rl.get("val_tasks_per_suite", rl.get("max_val_tasks", 4)))
+    n_eps = int(rl.get("val_episodes_per_task", 2))
+    frames, metrics, all_succ = [], {}, []
+    for suite in suites:
+        suite_tasks = tasks if suite == lc["suite"] else client.list_tasks(suite)
+        succ, rewards, lengths = [], [], []
+        for task in suite_tasks[:n_tasks]:
+            for e in range(n_eps):
+                result = rollout_episode(
+                    policy,
+                    client,
+                    suite=suite,
+                    task=task.name,
+                    camera_map=lc["camera_map"],
+                    device=device,
+                    episode=e,
+                    seed=int(rl.get("val_seed", 1234)) + e,
+                    n_exec_steps=int(lc["n_exec_steps"]),
+                    max_steps=lc["max_steps"],
+                    max_decisions=lc["max_decisions"],
+                    action_slice=tuple(lc["action_slice"]),
+                    action_scale=float(lc["action_scale"]),
+                    gripper_sign=float(lc["gripper_sign"]),
+                    env_gripper_dims=tuple(lc["env_gripper_dims"]),
+                    action_clip=lc.get("action_clip", 1.0),
+                    frame_every=int(lc["frame_every"]) if e == 0 else 0,
+                    collect=False,
+                )
+                succ.append(float(result.success))
+                rewards.append(_reward(cfg, result))
+                lengths.append(float(result.steps))
+                if result.frames and e == 0:
+                    frames.extend(result.frames[: int(rl.get("val_frames_per_task", 4))])
+        name = suite.replace(",", "+")[:40]
+        metrics[f"rl/val_success/{name}"] = float(np.mean(succ)) if succ else 0.0
+        metrics[f"rl/val_reward/{name}"] = float(np.mean(rewards)) if rewards else 0.0
+        metrics[f"rl/val_episode_len/{name}"] = float(np.mean(lengths)) if lengths else 0.0
+        all_succ += succ
+    metrics["rl/val_success_rate"] = float(np.mean(all_succ)) if all_succ else 0.0
+    metrics["rl/val_episodes"] = float(len(all_succ))
+    return metrics, frames
 
 
 def demo_fm_loss(policy, demo: DemoStream) -> tuple[torch.Tensor, dict]:

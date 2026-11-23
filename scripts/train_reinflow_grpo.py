@@ -92,6 +92,11 @@ def _reward(cfg: dict, result) -> float:
 
 def rollout_group(policy, client, cfg, task, *, device, rng, frames=False) -> list:
     lc, rl = cfg["libero"], cfg["rl"]
+    # GRPO's baseline is the mean over rollouts *from the same start*: one initial
+    # state per group, only the policy's SDE noise (and sim seed) varies inside it.
+    # Audit A7: drawing a fresh init state per member made the advantage measure
+    # layout difficulty instead of action quality.
+    init_state = int(rng.integers(0, max(1, task.n_init_states)))
     episodes = []
     for _ in range(int(rl["group_size"])):
         seed = int(rng.integers(0, 2**31 - 1))
@@ -103,7 +108,7 @@ def rollout_group(policy, client, cfg, task, *, device, rng, frames=False) -> li
             task=task.name,
             camera_map=lc["camera_map"],
             device=device,
-            episode=int(rng.integers(0, max(1, task.n_init_states))),
+            episode=init_state,
             seed=seed,
             n_exec_steps=int(lc["n_exec_steps"]),
             max_steps=lc["max_steps"],

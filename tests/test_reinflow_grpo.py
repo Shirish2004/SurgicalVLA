@@ -129,3 +129,31 @@ def test_step_and_sequence_ratio_share_gradient_at_ratio_one():
         grads.append(new.grad.clone())
     # step averages over K*B terms, sequence over B: same direction, scale 1/K
     torch.testing.assert_close(grads[0] * 3, grads[1])
+
+
+def test_grpo_group_shares_initial_state(monkeypatch):
+    """Audit A7: every member of a GRPO group starts from the same initial state."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    import scripts.train_reinflow_grpo as trg
+
+    calls = []
+
+    def fake_rollout(policy, client, **kw):
+        calls.append(kw)
+        return SimpleNamespace(success=False, final_observation=None)
+
+    monkeypatch.setattr(trg, "rollout_episode", fake_rollout)
+    cfg = {
+        "libero": dict(suite="s", camera_map={}, n_exec_steps=5, max_steps=10, max_decisions=2,
+                       action_slice=[0, 7], action_scale=1.0, gripper_sign=1.0, env_gripper_dims=[6],
+                       frame_every=0),
+        "rl": {"group_size": 6, "sde_steps": 3},
+    }
+    task = SimpleNamespace(name="t", n_init_states=50)
+    episodes = trg.rollout_group(None, None, cfg, task, device="cpu", rng=np.random.default_rng(0))
+    assert len(episodes) == 6
+    assert len({c["episode"] for c in calls}) == 1, "group members must share the init state"
+    assert len({c["seed"] for c in calls}) == 6, "noise seeds must differ within a group"

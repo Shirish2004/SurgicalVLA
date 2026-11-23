@@ -1,8 +1,7 @@
 # Baselines and evaluation protocol
 
-*Status (2026-11-23): LIBERO-Spatial within ~5 pts of the published number with the canonical
-simulator stack and a 10-step execution horizon (§3); the protocol choice is pending sign-off.
-Full 4-suite × 3-seed runs not yet done.*
+*Status (2026-11-23): protocol fixed: LeRobot's canonical LIBERO image and each checkpoint's
+saved 50-step execution horizon (§3). Full 4-suite × 3-seed runs not yet done.*
 
 ## 1. Software and hardware
 
@@ -32,7 +31,7 @@ All evaluation goes through LeRobot's own integrations (`lerobot-eval`, or
 
 | Benchmark | Protocol | Command |
 |---|---|---|
-| LIBERO | 4 suites (spatial, object, goal, 10) × 10 tasks × **all 50 benchmark init states** × 3 seeds (1000, 2000, 3000); suite horizons 280/280/300/520; 10 settle steps; images rotated 180°; 8-D state | `python3 scripts/benchmark.py eval --benchmark libero --server --checkpoint lerobot/smolvla_libero --revision a24f1f38…` |
+| LIBERO | LeRobot's canonical Docker image (`--server`); 4 suites (spatial, object, goal, 10) × 10 tasks × **all 50 benchmark init states** × 3 seeds (1000, 2000, 3000); the checkpoint's own `n_action_steps` (50); suite horizons 280/280/300/520; 10 settle steps; images rotated 180°; 8-D state | `python3 scripts/benchmark.py eval --benchmark libero --server --checkpoint lerobot/smolvla_libero --revision a24f1f38…` |
 | LIBERO-Plus | every registered variant of the 4 perturbed suites (10,030), 1 episode each (upstream protocol), seed 1000 | `… eval --benchmark libero_plus …` |
 | RoboTwin 2.0 | 50 tasks × 100 episodes, **Easy** (demo_clean). LeRobot's integration hard-codes `task_config/demo_clean.yml`, so Hard (demo_randomized) is not available yet | `… eval --benchmark robotwin …` |
 | VLABench | 21 primitive + 22 composite tasks × 10 episodes × 3 seeds (VLABench paper protocol) | `… eval --benchmark vlabench …` |
@@ -69,10 +68,12 @@ Findings so far:
 3. **Execution horizon matters most** (+19 pts). Executing the full 50-step chunk open-loop
    (the checkpoint's saved `n_action_steps`) gives 66 %; replanning every 10 steps gives 85 %,
    within about 5 pts of the published 90 % (and the CI includes 89 %).
-4. **Integrity caveat.** `n_action_steps=10` was found by looking at success on
-   LIBERO-Spatial (seed 1000, 200 episodes), i.e. on evaluation episodes. Whatever value is
-   adopted must be fixed before any of our models is evaluated and used identically for every
-   method, and this selection must be disclosed. Pending decision.
+4. **Decision (2026-11-23): the protocol keeps the 50-step execution horizon** (the
+   checkpoint's saved `n_action_steps`) for every method, baselines and ours, so that nothing
+   is selected on evaluation episodes. The 10-step result was found by looking at evaluation
+   success and is reported only as an exploratory observation, never as the protocol number.
+   Consequence: the protocol baseline on LIBERO-Spatial is ~66 % (canonical stack), below the
+   published ~90 %; the paper states this and the reason.
 
 The full 6,000-episode LIBERO run and LIBERO-Plus are **on hold** until this is resolved.
 

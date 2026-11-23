@@ -79,7 +79,7 @@ forgetting measurement, is what the pilot should establish, not the joint loss i
 | Target noun phrase | SmolVLM2 (already in the backbone) or a rule-based parser as fallback |
 | Masks and tracks | SAM 3 (transformers), SAM 3.1 when ported |
 | Object features | DINOv2 ViT-S/14 (Apache); DINOv3 optional |
-| Point tracks | **TAPNext** (Apache) instead of CoTracker3 (non-commercial) |
+| Point tracks | **TAPNext** (Apache); decided 2026-11-23: the release must allow commercial use, so CoTracker3 (CC BY-NC) is excluded |
 | Depth | Video Depth Anything Small (Apache), relative depth only |
 | Phases | Gripper open/close events and end-effector speed minima from proprioception |
 | 6D pose | Off; optional real-robot module only |

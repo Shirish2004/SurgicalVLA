@@ -41,7 +41,16 @@ def test_handover_reward_success_and_shaping():
     far = target.clone()
     far[:3] = 1.0
     assert compute_handover_reward(True, far, target) < perfect
-    assert compute_handover_reward(False, target, target) < 0.1
+    near_fail = compute_handover_reward(False, target, target)
+    far_fail = compute_handover_reward(False, far, target)
+    # Audit A5: among failures, closer to the target must score higher,
+    # and no failure may out-rank any success.
+    assert far_fail < near_fail < compute_handover_reward(True, far, target)
+
+
+def test_handover_reward_rejects_shaping_that_beats_success():
+    with pytest.raises(ValueError, match="near-miss"):
+        compute_handover_reward(True, success_reward=0.5, position_weight=0.3, orientation_weight=0.3)
 
 
 def test_group_advantages_are_zscored():

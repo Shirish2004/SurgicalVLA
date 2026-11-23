@@ -40,6 +40,20 @@ def compute_handover_reward(
     orientation_scale: float = math.pi / 4.0,
     failure_penalty: float = 0.0,
 ) -> float:
+    """``success_reward * 1[success] - failure_penalty * 1[fail] + shaped``.
+
+    ``shaped = w_p exp(-|p - p*| / s_p) + w_r exp(-theta / s_r)`` with ``theta`` the
+    SO(3) geodesic angle, so ``0 <= shaped <= w_p + w_r`` and it *increases* as the
+    object approaches the target, for successes and failures alike. (Audit A5: the
+    previous version subtracted ``shaped`` on failure, so a failed rollout that got
+    closer to the target was rewarded *less*.) ``success_reward`` must exceed the
+    maximum shaping so that no failure can out-rank a success inside a GRPO group.
+    """
+    if success_reward <= position_weight + orientation_weight:
+        raise ValueError(
+            f"success_reward={success_reward} must exceed position_weight + orientation_weight="
+            f"{position_weight + orientation_weight}, otherwise a near-miss can outrank a success"
+        )
     reward = float(success_reward) if success else -abs(float(failure_penalty))
     if object_pose_6d is None or target_pose_6d is None:
         return reward
@@ -48,7 +62,7 @@ def compute_handover_reward(
         position_weight * math.exp(-float(position) / max(position_scale, 1e-6))
         + orientation_weight * math.exp(-float(angle) / max(orientation_scale, 1e-6))
     )
-    return reward + shaped if success else reward - shaped
+    return reward + shaped
 
 
 def group_normalized_advantages(rewards: Sequence[float], eps: float = 1e-8) -> Tensor:

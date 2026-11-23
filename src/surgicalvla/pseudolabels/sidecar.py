@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # name -> (description, per-frame?)
 SCHEMA = {
@@ -37,6 +37,7 @@ SCHEMA = {
     "obj_box": ("target box, normalised xyxy, (F, 4) float16", True),
     "obj_mask": ("target mask at 32x32, bit-packed, (F, 128) uint8", True),
     "obj_score": ("segmentation confidence of the target, (F,) float16", True),
+    "obj_select_confidence": ("confidence that the tracked object is the target: 0.5 text score + 0.5 carried score", False),
     "obj_feat": ("mask-pooled DINOv2 feature of the target, (F, C) float16", True),
     "grip_box": ("gripper box, normalised xyxy, (F, 4) float16", True),
     "grip_score": ("segmentation confidence of the gripper, (F,) float16", True),

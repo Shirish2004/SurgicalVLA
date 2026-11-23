@@ -30,6 +30,10 @@ STOP_AFTER = (
 )
 ARTICLES = ("the ", "a ", "an ", "both ", "all ", "some ", "your ")
 STOPWORDS = {"the", "a", "an", "of", "and", "to", "on", "in", "with", "it", "its"}
+COLOURS = {
+    "red", "green", "blue", "yellow", "white", "black", "orange", "purple", "pink", "brown", "grey", "gray",
+    "silver", "gold", "golden", "light", "dark", "metal", "metallic", "wooden", "plastic", "glass",
+}
 
 
 def _norm(text: str) -> str:
@@ -57,13 +61,23 @@ def rule_phrase(instruction: str) -> str | None:
     if best is None:
         return None
     rest = _strip_articles(text[best[0] + len(best[1]) + 2 :])
-    cut = len(rest)
-    for stop in STOP_AFTER:
-        j = (" " + rest).find(stop)
-        if 0 <= j - 1 < cut and j > 0:
-            cut = j - 1
-    phrase = rest[:cut].strip()
+    phrase = _until_stop(rest)
+    # "yellow and white mug": an all-adjective phrase before "and" continues past it
+    while phrase and all(w in COLOURS for w in phrase.split()) and rest[len(phrase) :].startswith(" and "):
+        tail = _until_stop(rest[len(phrase) + 5 :])
+        if not tail:
+            break
+        phrase = f"{phrase} and {tail}"
     return phrase or None
+
+
+def _until_stop(text: str) -> str:
+    cut = len(text)
+    for stop in STOP_AFTER:
+        j = (" " + text).find(stop)
+        if 0 < j and j - 1 < cut:
+            cut = j - 1
+    return text[:cut].strip()
 
 
 def grounded(phrase: str, instruction: str) -> bool:

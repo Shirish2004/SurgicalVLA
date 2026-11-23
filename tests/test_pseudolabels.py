@@ -86,6 +86,8 @@ def test_store_is_resumable_atomic_and_bounded(tmp_path):
         ("Lift the bottle with narrow top head-up from the table", "bottle"),
         ("open the top drawer of the cabinet", "top drawer"),
         ("turn on the stove", "stove"),
+        ("put the yellow and white mug in the microwave and close it", "yellow and white mug"),
+        ("pick up the black bowl and the plate", "black bowl"),
     ],
 )
 def test_rule_phrase(instruction, phrase):
@@ -110,3 +112,14 @@ def test_grid_points_lie_inside_the_mask():
     pts = grid_points_in_mask(m, 16)
     assert 0 < len(pts) <= 16
     assert m[pts[:, 1].round().astype(int), pts[:, 0].round().astype(int)].all()
+
+
+def test_carried_score_prefers_the_object_that_moves_with_the_gripper():
+    from surgicalvla.pseudolabels.vision import _carried_score
+
+    grip = [np.array([0.1 + 0.02 * t, 0.5]) for t in range(20)]
+    carried = [np.array([0.3, 0.6])] * 8 + [np.array([0.1 + 0.02 * t, 0.55]) for t in range(8, 20)]
+    static = [np.array([0.7, 0.7])] * 20
+    assert _carried_score(carried, grip, grasp_frame=8) > 0.9
+    assert _carried_score(static, grip, grasp_frame=8) == 0.0
+    assert _carried_score(carried, grip, grasp_frame=None) == 0.0

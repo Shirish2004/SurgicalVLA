@@ -29,7 +29,7 @@ import numpy as np
 import torch
 
 from surgicalvla.pseudolabels.nounphrase import VLMPhraseExtractor, extract_phrase
-from surgicalvla.pseudolabels.phases import phase_boundaries
+from surgicalvla.pseudolabels.phases import gripper_events, phase_boundaries
 from surgicalvla.pseudolabels.sidecar import SidecarStore
 
 
@@ -71,6 +71,18 @@ def iter_episodes(args, episodes: list[int], lengths: dict[int, int]):
     for ep in list(buffers):  # incomplete episodes (should not happen); label what arrived
         print(f"warning: episode {ep} incomplete ({len(buffers[ep])}/{lengths[ep]} frames)", file=sys.stderr)
         yield assemble(ep)
+
+
+def grasp_frame(action: np.ndarray, gripper_dims: list[int], labelled: np.ndarray) -> int | None:
+    """Index into ``labelled`` of the first frame after the gripper command first closes.
+
+    "Closing" is the direction of the first gripper event: commands are rescaled per episode,
+    and a demonstration starts with the gripper open, so the first transition is a close.
+    """
+    events = [f for d in gripper_dims for f in gripper_events(action[:, d])[0][:1]]
+    if not events:
+        return None
+    return int(np.searchsorted(labelled, min(events)))
 
 
 def main() -> None:
@@ -125,7 +137,11 @@ def main() -> None:
         idx = np.arange(0, len(frames), args.stride)
         sub = frames[idx]
         t = time.time()
-        vis = vision.label(sub, phrase or "object") if phrase else None
+        pb = phase_boundaries(state, action, args.gripper_dims)
+        timing["phase_s"] = time.time() - t
+        grasp = grasp_frame(action, args.gripper_dims, idx)
+        t = time.time()
+        vis = vision.label(sub, phrase, grasp) if phrase else None
         timing["vision_s"] = time.time() - t
         arrays = {
             "frame_index": idx.astype(np.int32),
@@ -142,12 +158,9 @@ def main() -> None:
         if tracker is not None and masks is not None:
             arrays.update(tracker.track(sub, masks, arrays["obj_score"].astype(np.float32)))
         timing["tracks_s"] = time.time() - t
-        t = time.time()
-        pb = phase_boundaries(state, action, args.gripper_dims)
         arrays.update(
             phase_frames=pb.frames.astype(np.int32), phase_kinds=pb.kinds.astype(np.int8), phase_confidence=pb.confidence.astype(np.float16)
         )
-        timing["phase_s"] = time.time() - t
         size = store.write(ep, arrays, stats={"frames": int(len(frames)), "labelled": int(len(idx)), **{k: round(v, 3) for k, v in timing.items()}})
         row = {"episode": ep, "frames": int(len(frames)), "labelled": int(len(idx)), "bytes": size, "phrase": phrase,
                "obj_valid": float((arrays.get("obj_score", np.zeros(1)) > 0).mean()), **timing}

@@ -13,6 +13,10 @@ default = { features = ["py313", "main"], solve-group = "main" }
 dev = { features = ["py313", "main", "dev"], solve-group = "main" }
 asr = { features = ["py313", "main", "asr"], solve-group = "main" }
 libero = { features = ["py310", "libero"], solve-group = "libero", no-default-feature = true }
+# Benchmark evaluation through LeRobot's own sim integrations (lerobot-eval).
+# Same solve group as training, so eval runs the exact torch/transformers/lerobot
+# versions the policy was trained with; it only adds the simulator packages.
+sim-eval = { features = ["py313", "main", "dev", "simeval"], solve-group = "main" }
 
 [feature.py313.dependencies]
 python = "3.13.*"
@@ -67,3 +71,13 @@ opencv-python = "==4.6.0.66"
 [feature.libero.activation.env]
 PYTHONNOUSERSITE = "1"
 PYTHONPATH = ""
+
+# lerobot[libero] = lerobot[dataset,transformers-dep,scipy-dep] + hf-libero; the first
+# three are already in `main`, so only the simulator and scipy are added here.
+[feature.simeval.pypi-dependencies]
+hf-libero = { version = ">=0.1.5,<0.2.0" }
+scipy = ">=1.14.0,<2.0.0"
+
+[feature.simeval.activation.env]
+MUJOCO_GL = "egl"
+PYOPENGL_PLATFORM = "egl"

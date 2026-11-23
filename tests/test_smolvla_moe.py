@@ -703,3 +703,26 @@ def test_flow_time_matches_smolvla_beta_schedule():
     assert float(t.min()) >= 0.001 and float(t.max()) <= 1.0
     # E[Beta(1.5,1)] = 0.6 -> 0.999*0.6+0.001 = 0.6004 (uniform would give 0.5)
     assert abs(float(t.mean()) - 0.6004) < 3e-3
+
+
+def test_cot_not_generated_until_cot_supervised():
+    """Audit A4: an untrained CoT head must not inject tokens into the inference prefix."""
+    cfg = make_config(cot_max_tokens=3)
+    model = make_model(cfg)
+    batch = make_batch(cfg)
+    objects = model.object_features(
+        batch["state"], batch["obj_sam_feat"], batch["obj_pose_vec"], batch["obj_valid_mask"]
+    )
+    args = (batch["images"], batch["img_masks"], batch["lang_tokens"], batch["lang_masks"], batch["state"])
+    with torch.no_grad():
+        model.sample_actions(*args, objects=objects, refresh_cot=True)
+    assert model._cot_cache is None and not model.cot_inference_enabled
+
+    model.train()
+    model(**to_model_inputs(model, batch))  # carries cot_ids -> CoT-supervised step
+    model.eval()
+    assert int(model.cot_trained_steps) == 1 and model.cot_inference_enabled
+    assert "cot_trained_steps" in model.state_dict()
+    with torch.no_grad():
+        model.sample_actions(*args, objects=objects, refresh_cot=True)
+    assert model._cot_cache is not None

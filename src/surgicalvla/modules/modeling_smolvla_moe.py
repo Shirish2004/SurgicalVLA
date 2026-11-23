@@ -152,6 +152,11 @@ class SmolVLAMoEModel(nn.Module):
         self._phase_token_ids = self._tokenize_phases()
         self._moe_layers = self._upcycle_expert_ffns()
         self._cot_cache: tuple[Tensor, Tensor, Tensor | None] | None = None
+        # Number of optimisation steps that carried CoT supervision. Inference only
+        # decodes CoT once this is > 0 (audit A4): a model fit without CoT tokens in its
+        # prefix must not be fed untrained LM-head output at test time. Persistent, so
+        # it survives save/load; checkpoints from before this field load it as 0.
+        self.register_buffer("cot_trained_steps", torch.zeros((), dtype=torch.long), persistent=True)
         self._cot_step = 0
         self.rtc_processor = rtc_processor
         if config.compile_model:
@@ -427,6 +432,10 @@ class SmolVLAMoEModel(nn.Module):
         positions = None if phase_pos is None else phase_pos.clamp_min(prompt_len)
         return cot_ids, cot_mask, positions
 
+    @property
+    def cot_inference_enabled(self) -> bool:
+        return bool(self.cot_trained_steps.item() > 0)
+
     def reset_cot(self) -> None:
         self._cot_cache = None
         self._cot_step = 0
@@ -445,11 +454,7 @@ class SmolVLAMoEModel(nn.Module):
         refresh_cot: bool = False,
         use_cache: bool | None = None,
     ) -> PrefixState:
-        if (
-            self.config.use_cot
-            and cot_ids is None
-            and refresh_cot
-        ):
+        if self.config.use_cot and cot_ids is None and refresh_cot and self.cot_inference_enabled:
             base, base_pad, _, _ = self.embed_prefix(
                 images,
                 img_masks,
@@ -462,7 +467,7 @@ class SmolVLAMoEModel(nn.Module):
             generated = self.generate_cot(base, base_pad, state.shape[0])
             if generated is not None:
                 self._cot_cache = generated
-        if cot_ids is None and self.config.use_cot:
+        if cot_ids is None and self.config.use_cot and self.cot_inference_enabled:
             cached = self._cot_cache
             if cached is not None:
                 cot_ids, cot_mask, cot_phase_positions = cached
@@ -609,6 +614,8 @@ class SmolVLAMoEModel(nn.Module):
                 reduction="none",
             ).view(target.shape)
             out["cot_loss"] = (ce * mask).sum() / mask.sum().clamp_min(1)
+            if self.training:
+                self.cot_trained_steps += 1
 
         aux = [m.aux_loss for m in self._moe_layers if m.aux_loss is not None]
         out["moe_aux_loss"] = torch.stack(aux).sum() if aux else fm_loss.new_zeros(())

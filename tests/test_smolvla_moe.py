@@ -245,7 +245,6 @@ def make_config(**overrides) -> SmolVLAMoEConfig:
         max_action_dim=8,
         num_steps=3,
         num_vlm_layers=4,
-        expert_cross_attn_vlm_layers=2,
         num_experts=4,
         num_shared_experts=1,
         moe_top_k=2,
@@ -334,7 +333,7 @@ def test_config_defaults_and_registration():
     assert cfg.num_object_tokens == 4 and cfg.obj_pose_dim == 13
     assert cfg.num_experts == 4 and cfg.moe_top_k == 2
     assert cfg.reinflow_min_std == 0.01 and cfg.reinflow_max_std == 0.15
-    assert cfg.expert_cross_attn_vlm_layers == cfg.num_vlm_layers // 2
+    assert cfg.expert_cross_attn_vlm_layers == cfg.num_vlm_layers
     assert "smolvla_moe" in PreTrainedConfig.get_known_choices()
     assert SmolVLAMoEPolicy.config_class is SmolVLAMoEConfig
     assert SmolVLAMoEPolicy.name == "smolvla_moe"
@@ -609,7 +608,7 @@ def test_expert_usage_matches_reported_layers():
     batch = make_batch(cfg)
     model(**to_model_inputs(model, batch))
     usage = model.expert_usage()
-    assert set(usage) == set(range(cfg.expert_cross_attn_vlm_layers))
+    assert set(usage) == set(range(len(model._moe_layers)))
     for value in usage.values():
         torch.testing.assert_close(value.sum(), torch.tensor(1.0))
 

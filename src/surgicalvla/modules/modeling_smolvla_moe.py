@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -492,20 +491,7 @@ class SmolVLAMoEModel(nn.Module):
             cot_phase_positions=cot_phase_positions,
         )
 
-    # ---------------------------------------------------------------- expert depth
-    @contextmanager
-    def _expert_depth(self):
-        vlm = self.vlm_with_expert
-        old = getattr(vlm, "num_vlm_layers", None)
-        depth = self.config.expert_cross_attn_vlm_layers
-        if old is not None and 0 < depth < old:
-            vlm.num_vlm_layers = depth
-        try:
-            yield
-        finally:
-            if old is not None:
-                vlm.num_vlm_layers = old
-
+    # ---------------------------------------------------------------- MoE context
     def _set_moe_context(self, e_phase: Tensor, obj_context: Tensor) -> None:
         for layer in self._moe_layers:
             layer.set_context(e_phase, obj_context)
@@ -567,14 +553,13 @@ class SmolVLAMoEModel(nn.Module):
         prefix_2d = prefix.pad_masks[:, None, :].expand(bsize, suffix_len, prefix_len)
         att_2d = torch.cat([prefix_2d, make_att_2d_masks(suffix_pad, suffix_att)], dim=2)
         pos = prefix.pad_masks.sum(1)[:, None] + torch.cumsum(suffix_pad, 1) - 1
-        with self._expert_depth():
-            outputs, _ = self.vlm_with_expert.forward(
-                attention_mask=att_2d,
-                position_ids=pos,
-                past_key_values=prefix.cache,
-                inputs_embeds=[None, suffix_embs],
-                use_cache=True,
-            )
+        outputs, _ = self.vlm_with_expert.forward(
+            attention_mask=att_2d,
+            position_ids=pos,
+            past_key_values=prefix.cache,
+            inputs_embeds=[None, suffix_embs],
+            use_cache=True,
+        )
         if prefix.cache is not None:
             _crop_cache(prefix.cache, prefix_len)
         suffix_out = outputs[1][:, -self.config.chunk_size :].to(dtype=torch.float32)
@@ -648,39 +633,38 @@ class SmolVLAMoEModel(nn.Module):
         suffix_embs, suffix_pad, suffix_att = self.embed_suffix(x_t, timestep)
         suffix_len = suffix_pad.shape[1]
         bsize, prefix_len = prefix_pad_masks.shape
-        with self._expert_depth():
-            if past_key_values is not None:
-                prefix_2d = prefix_pad_masks[:, None, :].expand(bsize, suffix_len, prefix_len)
-                suffix_2d = make_att_2d_masks(suffix_pad, suffix_att)
-                full_2d = torch.cat([prefix_2d, suffix_2d], dim=2)
-                pos = prefix_pad_masks.sum(1)[:, None] + torch.cumsum(suffix_pad, 1) - 1
-                outputs, _ = self.vlm_with_expert.forward(
-                    attention_mask=full_2d,
-                    position_ids=pos,
-                    past_key_values=past_key_values,
-                    inputs_embeds=[None, suffix_embs],
-                    use_cache=True,
-                )
-            else:
-                if prefix_embs is None:
-                    raise ValueError("prefix_embs is required when no KV cache is used")
-                pad = torch.cat([prefix_pad_masks, suffix_pad], dim=1)
-                att = torch.cat(
-                    [
-                        prefix_att_masks
-                        if prefix_att_masks is not None
-                        else torch.ones_like(prefix_pad_masks),
-                        suffix_att,
-                    ],
-                    dim=1,
-                )
-                outputs, _ = self.vlm_with_expert.forward(
-                    attention_mask=make_att_2d_masks(pad, att),
-                    position_ids=torch.cumsum(pad, 1) - 1,
-                    past_key_values=None,
-                    inputs_embeds=[prefix_embs, suffix_embs],
-                    use_cache=False,
-                )
+        if past_key_values is not None:
+            prefix_2d = prefix_pad_masks[:, None, :].expand(bsize, suffix_len, prefix_len)
+            suffix_2d = make_att_2d_masks(suffix_pad, suffix_att)
+            full_2d = torch.cat([prefix_2d, suffix_2d], dim=2)
+            pos = prefix_pad_masks.sum(1)[:, None] + torch.cumsum(suffix_pad, 1) - 1
+            outputs, _ = self.vlm_with_expert.forward(
+                attention_mask=full_2d,
+                position_ids=pos,
+                past_key_values=past_key_values,
+                inputs_embeds=[None, suffix_embs],
+                use_cache=True,
+            )
+        else:
+            if prefix_embs is None:
+                raise ValueError("prefix_embs is required when no KV cache is used")
+            pad = torch.cat([prefix_pad_masks, suffix_pad], dim=1)
+            att = torch.cat(
+                [
+                    prefix_att_masks
+                    if prefix_att_masks is not None
+                    else torch.ones_like(prefix_pad_masks),
+                    suffix_att,
+                ],
+                dim=1,
+            )
+            outputs, _ = self.vlm_with_expert.forward(
+                attention_mask=make_att_2d_masks(pad, att),
+                position_ids=torch.cumsum(pad, 1) - 1,
+                past_key_values=None,
+                inputs_embeds=[prefix_embs, suffix_embs],
+                use_cache=False,
+            )
         if past_key_values is not None:
             _crop_cache(past_key_values, prefix_len)
         hidden = outputs[1][:, -self.config.chunk_size :].to(dtype=torch.float32)

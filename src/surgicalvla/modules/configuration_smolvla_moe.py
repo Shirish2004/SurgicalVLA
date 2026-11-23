@@ -35,8 +35,11 @@ class SmolVLAMoEConfig(SmolVLAConfig):
     cot_stop: str = "</cot>"
     full_vlm_layers_for_cot: bool = True
     # Number of leading VLM layers whose K/V the action expert cross-attends to.
-    # ``-1`` resolves to half the VLM depth (ARCH.md: N = L/2); ``0`` means "all".
-    expert_cross_attn_vlm_layers: int = -1
+    # SmolVLA pairs expert layer i with VLM layer i (``get_model_layers``), so any value
+    # below ``num_vlm_layers`` silently skips expert layers and breaks the pretrained
+    # function (audit A1: 8/16 expert layers ran, actions off by 152% vs smolvla_base).
+    # Only the full depth is valid; ``0``/``-1`` resolve to it. Kept for config round-trip.
+    expert_cross_attn_vlm_layers: int = 0
 
     # --- phase-conditioned MoE action expert -----------------------------
     num_experts: int = 4
@@ -80,11 +83,12 @@ class SmolVLAMoEConfig(SmolVLAConfig):
                 "expected 0 < reinflow_min_std <= reinflow_max_std, got "
                 f"({self.reinflow_min_std}, {self.reinflow_max_std})"
             )
-        if self.expert_cross_attn_vlm_layers == 0:
-            expert_depth = self.num_vlm_layers
-        elif self.expert_cross_attn_vlm_layers < 0:
-            expert_depth = max(1, self.num_vlm_layers // 2)
-        else:
-            expert_depth = self.expert_cross_attn_vlm_layers
-        # Stored rather than cached: ``PreTrainedConfig`` round-trips this field.
-        self.expert_cross_attn_vlm_layers = min(self.num_vlm_layers, expert_depth)
+        if self.expert_cross_attn_vlm_layers <= 0:
+            self.expert_cross_attn_vlm_layers = self.num_vlm_layers
+        if self.expert_cross_attn_vlm_layers != self.num_vlm_layers:
+            raise ValueError(
+                f"expert_cross_attn_vlm_layers={self.expert_cross_attn_vlm_layers} != num_vlm_layers="
+                f"{self.num_vlm_layers}: SmolVLA interleaves expert and VLM layers one-to-one, so a "
+                "shallower cross-attention depth would skip action-expert layers. Reduce "
+                "num_vlm_layers instead."
+            )

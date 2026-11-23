@@ -40,6 +40,11 @@ class SmolVLAMoEConfig(SmolVLAConfig):
     expert_cross_attn_vlm_layers: int = 0
 
     # --- phase-conditioned MoE action expert -----------------------------
+    # upcycled: 1 shared + top-k of E full-width copies of the dense FFN ((shared + k) x dense compute)
+    # matched:  experts of width dense / (shared + k), random row-slices: active compute = one dense FFN
+    # dense:    no MoE (the original dense FFN)
+    # dense_param_matched: one dense FFN widened to the MoE's total parameters (zero-init extra rows)
+    moe_variant: str = "upcycled"
     num_experts: int = 4
     num_shared_experts: int = 1
     moe_top_k: int = 2
@@ -52,6 +57,24 @@ class SmolVLAMoEConfig(SmolVLAConfig):
     pose_aux_loss_weight: float = 0.2
     pose_target_dim: int = 9  # relative translation (3) + continuous rotation (6)
 
+    # --- label-free auxiliary vision targets (training only, experimental) ---
+    aux_vision: bool = False
+    aux_feat_dim: int = 384  # DINOv2-S
+    aux_feat_weight: float = 0.1
+    aux_motion_weight: float = 0.1
+    aux_track_weight: float = 0.1
+    aux_rel_weight: float = 0.02  # weakest pseudo-label (docs/pseudolabel_quality.md)
+
+    # --- latent chain of thought (experimental) ------------------------------
+    latent_cot: bool = False
+    latent_cot_tokens: int = 4
+    latent_cot_horizon: int = 10  # frames ahead whose visual latent the tokens predict
+    latent_cot_weight: float = 0.1
+    latent_ema_decay: float = 0.99
+    # Explicit -> latent curriculum: probability of feeding the explicit CoT text decays
+    # linearly from 1 to 0 over this many training steps (0 disables the curriculum).
+    cot_curriculum_steps: int = 0
+
     # --- ReinFlow / online RL --------------------------------------------
     use_reinflow: bool = False
     reinflow_min_std: float = 0.01
@@ -62,8 +85,15 @@ class SmolVLAMoEConfig(SmolVLAConfig):
     # statistics; it does not change the model graph.
     gripper_dims: list[int] = field(default_factory=lambda: [6])
 
+    @property
+    def observation_delta_indices(self) -> list:
+        # the latent CoT target needs the frame `latent_cot_horizon` steps ahead
+        return [0, self.latent_cot_horizon] if self.latent_cot else [0]
+
     def __post_init__(self):
         super().__post_init__()
+        if self.moe_variant not in ("upcycled", "matched", "dense", "dense_param_matched"):
+            raise ValueError(f"unknown moe_variant {self.moe_variant!r}")
         if self.num_experts < 1:
             raise ValueError(f"num_experts must be >= 1, got {self.num_experts}")
         if self.num_shared_experts < 1:

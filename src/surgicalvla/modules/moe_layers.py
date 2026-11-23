@@ -11,7 +11,13 @@ from surgicalvla.modules.nn import FP32Linear
 
 
 class SwiGLUExpert(nn.Module):
-    """SwiGLU FFN (SmolLM2/Gemma layout)."""
+    """SwiGLU FFN (SmolLM2/Gemma layout).
+
+    An expert built from a dense FFN keeps ``rows``: the dense intermediate rows it was cut
+    from (``-1`` marks extra rows of a widened expert, initialised to contribute nothing).
+    :meth:`load_dense` re-cuts the expert from new dense weights, so pretrained weights can be
+    loaded after construction for every MoE variant.
+    """
 
     def __init__(
         self,
@@ -20,46 +26,78 @@ class SwiGLUExpert(nn.Module):
         act_fn: nn.Module | None = None,
         *,
         bias: bool = False,
+        rows: torch.Tensor | None = None,
     ):
         super().__init__()
         self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=bias)
         self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=bias)
         self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=bias)
         self.act_fn = act_fn if act_fn is not None else nn.SiLU()
+        self.register_buffer("rows", rows if rows is not None else torch.arange(intermediate_size), persistent=False)
+        self.zero_output = False
 
     @classmethod
-    def from_dense(cls, dense: nn.Module, *, zero_output: bool = False) -> SwiGLUExpert:
-        """Copy a dense MLP into an expert (weight up-cycling)."""
+    def from_dense(
+        cls, dense: nn.Module, *, zero_output: bool = False, rows: torch.Tensor | None = None
+    ) -> SwiGLUExpert:
+        """Copy (a row-slice or a widening of) a dense MLP into an expert.
+
+        ``rows`` selects dense intermediate rows; entries ``-1`` add rows with zero
+        down-projection, so the expert computes exactly the selected part of the dense FFN.
+        """
         gate = getattr(dense, "gate_proj", None)
-        up = getattr(dense, "up_proj", None)
-        down = getattr(dense, "down_proj", None)
-        if gate is None or up is None or down is None:
+        if gate is None or getattr(dense, "up_proj", None) is None or getattr(dense, "down_proj", None) is None:
             raise ValueError(
                 "dense MLP must expose gate_proj/up_proj/down_proj (SmolLM2/Gemma layout); "
                 f"got {type(dense).__name__}"
             )
+        rows = torch.arange(gate.out_features) if rows is None else torch.as_tensor(rows, dtype=torch.long)
         expert = cls(
             hidden_size=gate.in_features,
-            intermediate_size=gate.out_features,
+            intermediate_size=len(rows),
             act_fn=getattr(dense, "act_fn", None),
             bias=gate.bias is not None,
+            rows=rows,
         ).to(dtype=gate.weight.dtype, device=gate.weight.device)
-        with torch.no_grad():
-            expert.gate_proj.weight.copy_(gate.weight)
-            expert.up_proj.weight.copy_(up.weight)
-            expert.down_proj.weight.copy_(down.weight)
-            if gate.bias is not None:
-                expert.gate_proj.bias.copy_(gate.bias)
-                expert.up_proj.bias.copy_(up.bias)
-                expert.down_proj.bias.copy_(down.bias)
-            if zero_output:
-                expert.down_proj.weight.zero_()
-                if expert.down_proj.bias is not None:
-                    expert.down_proj.bias.zero_()
+        expert.zero_output = zero_output
+        expert.load_dense(dense.gate_proj.weight, dense.up_proj.weight, dense.down_proj.weight)
         return expert
+
+    @torch.no_grad()
+    def load_dense(self, gate_w: torch.Tensor, up_w: torch.Tensor, down_w: torch.Tensor) -> None:
+        rows = self.rows.to(gate_w.device)
+        keep = rows >= 0
+        src = rows[keep]
+        for proj, w in ((self.gate_proj, gate_w), (self.up_proj, up_w)):
+            proj.weight[keep] = w[src].to(proj.weight)
+            if (~keep).any():
+                nn.init.normal_(proj.weight[~keep], std=0.02)
+        self.down_proj.weight.zero_()
+        if not self.zero_output:
+            self.down_proj.weight[:, keep] = down_w[:, src].to(self.down_proj.weight)
+        if self.down_proj.bias is not None:
+            self.down_proj.bias.zero_()
 
     def forward(self, x: Tensor) -> Tensor:
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+
+
+def expert_rows(dense_width: int, variant: str, n_shared: int, n_routed: int, top_k: int, seed: int = 0) -> tuple[list, list]:
+    """Row assignments ``(shared, routed)`` for each MoE variant.
+
+    * ``upcycled``: every expert is the full dense FFN (active FFN compute = (shared + top_k) x dense).
+    * ``matched``: experts of width ``dense / (shared + top_k)``, each a random row-slice of the dense
+      FFN, so the active path costs one dense FFN.
+    """
+    full = torch.arange(dense_width)
+    if variant == "upcycled":
+        return [full] * n_shared, [full] * n_routed
+    if variant != "matched":
+        raise ValueError(f"unknown MoE variant {variant!r}")
+    width = max(1, dense_width // (n_shared + top_k))
+    gen = torch.Generator().manual_seed(seed)
+    slices = [torch.randperm(dense_width, generator=gen)[:width].sort().values for _ in range(n_shared + n_routed)]
+    return slices[:n_shared], slices[n_shared:]
 
 
 class PhaseConditionedMoEFFN(nn.Module):
@@ -77,6 +115,8 @@ class PhaseConditionedMoEFFN(nn.Module):
         num_phases: int = 4,
         *,
         zero_routed_output: bool = True,
+        variant: str = "upcycled",
+        seed: int = 0,
     ):
         super().__init__()
         if num_experts < 1 or num_shared_experts < 1:
@@ -91,11 +131,15 @@ class PhaseConditionedMoEFFN(nn.Module):
         self.e_phase_dim = int(e_phase_dim)
         self.obj_ctx_dim = int(obj_ctx_dim)
 
-        self.shared_experts = nn.ModuleList(
-            [SwiGLUExpert.from_dense(dense_mlp) for _ in range(num_shared_experts)]
-        )
+        self.variant = variant
+        width = dense_mlp.gate_proj.out_features
+        shared_rows, routed_rows = expert_rows(width, variant, num_shared_experts, num_experts, top_k, seed)
+        # Zero-initialised routed outputs keep an up-cycled layer equal to the dense FFN at
+        # step 0. Matched experts are slices, so there is no identity to keep: they start live.
+        zero_routed = zero_routed_output and variant == "upcycled"
+        self.shared_experts = nn.ModuleList([SwiGLUExpert.from_dense(dense_mlp, rows=r) for r in shared_rows])
         self.routed_experts = nn.ModuleList(
-            [SwiGLUExpert.from_dense(dense_mlp, zero_output=zero_routed_output) for _ in range(num_experts)]
+            [SwiGLUExpert.from_dense(dense_mlp, zero_output=zero_routed, rows=r) for r in routed_rows]
         )
         self.router = FP32Linear(hidden_size + e_phase_dim + obj_ctx_dim, num_experts, bias=True)
         nn.init.zeros_(self.router.weight)
@@ -106,6 +150,11 @@ class PhaseConditionedMoEFFN(nn.Module):
         self.last_usage: Tensor | None = None
         self._e_phase: Tensor | None = None
         self._obj_ctx: Tensor | None = None
+
+    def load_dense(self, gate_w: Tensor, up_w: Tensor, down_w: Tensor) -> None:
+        """Re-cut every expert from (pretrained) dense FFN weights."""
+        for expert in [*self.shared_experts, *self.routed_experts]:
+            expert.load_dense(gate_w, up_w, down_w)
 
     # ------------------------------------------------------------------ context
     def set_context(self, e_phase: Tensor | None, obj_context: Tensor | None) -> None:
@@ -139,7 +188,9 @@ class PhaseConditionedMoEFFN(nn.Module):
         top_probs, top_idx = probs.topk(self.top_k, dim=-1)
         top_weights = top_probs / top_probs.sum(dim=-1, keepdim=True).clamp_min(1e-9)
 
-        shared = sum(expert(x) for expert in self.shared_experts) / self.num_shared_experts
+        shared = sum(expert(x) for expert in self.shared_experts)
+        if self.variant == "upcycled":  # each shared expert is a full copy: average them
+            shared = shared / self.num_shared_experts
         routed = self._dispatch(x, top_weights, top_idx)
         out = shared + routed
 
@@ -257,6 +308,7 @@ def gaussian_entropy(
 
 
 __all__ = [
+    "expert_rows",
     "PhaseConditionedMoEFFN",
     "ReinFlowNoiseHead",
     "SwiGLUExpert",

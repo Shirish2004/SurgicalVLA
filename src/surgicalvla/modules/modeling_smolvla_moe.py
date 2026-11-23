@@ -22,9 +22,12 @@ from lerobot.utils.import_utils import require_package
 from torch import Tensor, nn
 
 from surgicalvla.modules.configuration_smolvla_moe import SmolVLAMoEConfig
+from surgicalvla.modules.aux_heads import AuxVisionHeads
+from surgicalvla.modules.latent_cot import EMATargetEncoder, LatentReasoner
 from surgicalvla.modules.moe_layers import (
     PhaseConditionedMoEFFN,
     ReinFlowNoiseHead,
+    SwiGLUExpert,
     gaussian_entropy,
     masked_gaussian_log_prob,
 )
@@ -49,6 +52,7 @@ class PrefixState:
     cot_ids: Tensor | None
     cot_mask: Tensor | None
     cot_phase_positions: Tensor | None
+    latent_out: Tensor | None = None
 
 
 class PoseAuxHead(nn.Module):
@@ -121,6 +125,15 @@ class SmolVLAMoEModel(nn.Module):
         self.phase_proj = nn.Linear(self.vlm_hidden_size, self.expert_hidden_size)
         self.null_phase = nn.Parameter(torch.zeros(self.expert_hidden_size))
         self.pose_head = PoseAuxHead(self.expert_hidden_size, self.vlm_hidden_size, config.pose_target_dim)
+        self.phase_head = nn.Linear(self.expert_hidden_size, config.num_phases)
+        self.aux_heads = AuxVisionHeads(self.vlm_hidden_size, config.aux_feat_dim) if config.aux_vision else None
+        self.latent = LatentReasoner(self.vlm_hidden_size, config.latent_cot_tokens) if config.latent_cot else None
+        self.latent_target = (
+            EMATargetEncoder(self.vlm_with_expert, config.latent_ema_decay) if config.latent_cot else None
+        )
+        self._last_latent_slice: tuple[int, int] | None = None
+        # optimisation steps taken; drives the explicit-to-latent CoT curriculum
+        self.register_buffer("train_steps", torch.zeros((), dtype=torch.long), persistent=True)
         self.reinflow_head = ReinFlowNoiseHead(
             self.expert_hidden_size,
             self.expert_hidden_size,
@@ -193,11 +206,21 @@ class SmolVLAMoEModel(nn.Module):
         return ids
 
     def _upcycle_expert_ffns(self) -> list[PhaseConditionedMoEFFN]:
+        """Replace each action-expert FFN according to ``config.moe_variant``; returns the MoE layers."""
         layers = getattr(getattr(self.vlm_with_expert, "lm_expert", None), "layers", [])
+        if not layers:
+            raise RuntimeError("no action-expert layers found")
+        variant = self.config.moe_variant
         out = []
-        for layer in layers:
+        for i, layer in enumerate(layers):
             dense = getattr(layer, "mlp", None)
-            if dense is None or isinstance(dense, PhaseConditionedMoEFFN):
+            if dense is None or isinstance(dense, (PhaseConditionedMoEFFN, SwiGLUExpert)) or variant == "dense":
+                continue
+            if variant == "dense_param_matched":
+                width = dense.gate_proj.out_features
+                extra = width * (self.config.num_shared_experts + self.config.num_experts - 1)
+                rows = torch.cat([torch.arange(width), torch.full((extra,), -1)])
+                layer.mlp = SwiGLUExpert.from_dense(dense, rows=rows)
                 continue
             moe = PhaseConditionedMoEFFN(
                 dense,
@@ -208,11 +231,11 @@ class SmolVLAMoEModel(nn.Module):
                 num_shared_experts=self.config.num_shared_experts,
                 top_k=self.config.moe_top_k,
                 num_phases=self.config.num_phases,
+                variant=variant,
+                seed=i,
             )
             layer.mlp = moe
             out.append(moe)
-        if not out:
-            raise RuntimeError("no action-expert FFN was found to up-cycle")
         return out
 
     # ---------------------------------------------------------------- prefix / CoT
@@ -231,6 +254,7 @@ class SmolVLAMoEModel(nn.Module):
         object_token_mask: Tensor | None = None,
         cot_ids: Tensor | None = None,
         cot_mask: Tensor | None = None,
+        latent_tokens: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor, tuple[int, int] | None]:
         embs, pad, att = [], [], []
         for img, img_mask in zip(images, img_masks, strict=False):
@@ -290,6 +314,16 @@ class SmolVLAMoEModel(nn.Module):
             pad.append(cot_mask)
             att += [1] * cot_ids.shape[1]
             cot_slice = (start, start + cot_ids.shape[1])
+
+        self._last_latent_slice = None
+        if latent_tokens is not None:
+            # latent queries come last with causal attention: they read the whole prefix,
+            # and nothing before them (including text CoT) depends on them
+            start = sum(p.shape[1] for p in pad)
+            embs.append(latent_tokens.to(embs[0].dtype))
+            pad.append(torch.ones(latent_tokens.shape[:2], dtype=torch.bool, device=latent_tokens.device))
+            att += [1] * latent_tokens.shape[1]
+            self._last_latent_slice = (start, start + latent_tokens.shape[1])
 
         embs = torch.cat(embs, dim=1)
         pad = torch.cat(pad, dim=1)
@@ -464,7 +498,9 @@ class SmolVLAMoEModel(nn.Module):
             object_token_mask=objects.token_mask,
             cot_ids=cot_ids,
             cot_mask=cot_mask,
+            latent_tokens=None if self.latent is None else self.latent.tokens(state.shape[0]),
         )
+        latent_slice = self._last_latent_slice
         att_2d = make_att_2d_masks(pad, att)
         pos = torch.cumsum(pad, dim=1) - 1
         outputs, cache = self.vlm_with_expert.forward(
@@ -488,6 +524,7 @@ class SmolVLAMoEModel(nn.Module):
             cot_ids=cot_ids,
             cot_mask=cot_mask,
             cot_phase_positions=cot_phase_positions,
+            latent_out=None if latent_slice is None else prefix_out[:, latent_slice[0] : latent_slice[1]],
         )
 
     # ---------------------------------------------------------------- MoE context
@@ -529,6 +566,8 @@ class SmolVLAMoEModel(nn.Module):
         action_is_pad: Tensor | None = None,
         action_dim: int | None = None,
         loss_weights: Tensor | None = None,
+        aux: dict[str, Tensor] | None = None,
+        future_latent: Tensor | None = None,
     ) -> dict[str, Tensor]:
         if noise is None:
             noise = torch.randn_like(actions)
@@ -599,31 +638,43 @@ class SmolVLAMoEModel(nn.Module):
             if self.training:
                 self.cot_trained_steps += 1
 
-        aux = [m.aux_loss for m in self._moe_layers if m.aux_loss is not None]
-        out["moe_aux_loss"] = torch.stack(aux).sum() if aux else fm_loss.new_zeros(())
+        balance = [m.aux_loss for m in self._moe_layers if m.aux_loss is not None]
+        out["moe_aux_loss"] = torch.stack(balance).sum() if balance else fm_loss.new_zeros(())
 
+        pooled = (prefix.out * prefix.pad_masks[..., None]).sum(1) / prefix.pad_masks.sum(1, keepdim=True).clamp_min(1)
         if subtask_phase_id is not None:
-            phase_losses = [
-                F.cross_entropy(m.phase_classifier(prefix.e_phase), subtask_phase_id)
-                for m in self._moe_layers
-            ]
-            out["phase_loss"] = torch.stack(phase_losses).mean()
+            # phase from the CoT's phase token when CoT is present, else from pooled perception
+            feats = prefix.e_phase if prefix.cot_slice is not None else self.phase_proj(pooled.to(self.phase_proj.weight.dtype))
+            out["phase_loss"] = F.cross_entropy(self.phase_head(feats.to(self.phase_head.weight.dtype)), subtask_phase_id.long())
 
         if target_relative_pose_6d is not None:
-            pooled = (prefix.out * prefix.pad_masks[..., None]).sum(1) / prefix.pad_masks.sum(
-                1, keepdim=True
-            ).clamp_min(1)
             pred = self.pose_head(prefix.obj_context, pooled)
             target_pose = target_relative_pose_6d.to(pred.dtype)
             pos_loss = F.smooth_l1_loss(pred[..., :3], target_pose[..., :3])
             rot_loss = geodesic_rotation_loss(pred[..., 3:], target_pose[..., 3:])
             out["pose_aux_loss"] = pos_loss + rot_loss
 
+        if self.aux_heads is not None and aux:
+            out.update(self.aux_heads.losses(pooled, aux))
+        if self.latent is not None and future_latent is not None and prefix.latent_out is not None:
+            out["latent_cot_loss"] = LatentReasoner.loss(self.latent.predict(prefix.latent_out), future_latent)
+        if self.training:
+            self.train_steps += 1
+
         total = out["fm_loss"]
         total = total + self.config.cot_loss_weight * out.get("cot_loss", total.new_zeros(()))
         total = total + self.config.moe_aux_loss_weight * out["moe_aux_loss"]
         total = total + self.config.phase_loss_weight * out.get("phase_loss", total.new_zeros(()))
         total = total + self.config.pose_aux_loss_weight * out.get("pose_aux_loss", total.new_zeros(()))
+        for name, weight in (
+            ("aux_feat_loss", self.config.aux_feat_weight),
+            ("aux_motion_loss", self.config.aux_motion_weight),
+            ("aux_track_loss", self.config.aux_track_weight),
+            ("aux_rel_loss", self.config.aux_rel_weight),
+            ("latent_cot_loss", self.config.latent_cot_weight),
+        ):
+            if name in out:
+                total = total + weight * out[name]
         out["loss"] = total
         return out
 
@@ -847,42 +898,22 @@ class SmolVLAMoEModel(nn.Module):
 
     # ---------------------------------------------------------------- loading
     def load_smolvla_state(self, state_dict: dict[str, Tensor]) -> dict[str, list[str]]:
+        """Load SmolVLA weights; every replaced action-expert FFN is re-cut from its dense weights."""
         own = self.state_dict()
         matched = {k: v for k, v in state_dict.items() if k in own and own[k].shape == v.shape}
         missing, unexpected = self.load_state_dict(matched, strict=False)
-        layers = getattr(self.vlm_with_expert.lm_expert, "layers", [])
         copied = 0
-        prefix = "vlm_with_expert.lm_expert.layers."
-        for key, value in state_dict.items():
-            if not key.startswith(prefix) or ".mlp." not in key:
-                continue
-            head, _, tail = key.partition(".mlp.")
-            try:
-                idx = int(head.rsplit(".layers.", 1)[1])
-            except (IndexError, ValueError):
-                continue
-            if idx >= len(layers):
-                continue
-            moe = getattr(layers[idx], "mlp", None)
-            if not isinstance(moe, PhaseConditionedMoEFFN):
-                continue
-            proj, _, attr = tail.partition(".")
-            for expert in list(moe.shared_experts) + list(moe.routed_experts):
-                target = getattr(expert, proj, None)
-                param = getattr(target, attr, None)
-                if param is not None and param.shape == value.shape:
-                    with torch.no_grad():
-                        param.copy_(value)
-            copied += 1
-        for moe in self._moe_layers:
-            for expert in moe.routed_experts:
-                with torch.no_grad():
-                    expert.down_proj.weight.zero_()
+        for i, layer in enumerate(getattr(self.vlm_with_expert.lm_expert, "layers", [])):
+            mlp = getattr(layer, "mlp", None)
+            keys = [f"vlm_with_expert.lm_expert.layers.{i}.mlp.{p}_proj.weight" for p in ("gate", "up", "down")]
+            if hasattr(mlp, "load_dense") and all(k in state_dict for k in keys):
+                mlp.load_dense(*(state_dict[k] for k in keys))
+                copied += 1
         lm_head = getattr(getattr(self.vlm_with_expert, "vlm", None), "lm_head", None)
         if lm_head is not None and lm_head.weight.shape == self.cot_lm_head.weight.shape:
             with torch.no_grad():
                 self.cot_lm_head.weight.copy_(lm_head.weight)
-        return {"missing": list(missing), "unexpected": list(unexpected), "mlp_tensors": copied}
+        return {"missing": list(missing), "unexpected": list(unexpected), "mlp_tensors": 3 * copied}
 
     def expert_usage(self) -> dict[int, Tensor]:
         return {
@@ -958,6 +989,16 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
         state = self.prepare_state(batch)
         actions = self.prepare_action(batch)
         objects = self._objects(batch)
+        future_latent = None
+        if self.model.latent_target is not None and all(f"future.{k}" in batch for k in self.config.image_features):
+            future = {**batch, **{k: batch[f"future.{k}"] for k in self.config.image_features}}
+            future_latent = self.model.latent_target(self.prepare_images(future)[0])
+        cot_ids, cot_mask = batch.get("cot_input_ids"), batch.get("cot_attention_mask")
+        steps = self.config.cot_curriculum_steps
+        if steps > 0 and cot_ids is not None and self.training:
+            p_explicit = max(0.0, 1.0 - float(self.model.train_steps) / steps)
+            if float(torch.rand(())) >= p_explicit:
+                cot_ids = cot_mask = None  # latent-only step
         out = self.model.forward(
             images,
             img_masks,
@@ -968,14 +1009,16 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
             noise=noise,
             time=time,
             objects=objects,
-            cot_ids=batch.get("cot_input_ids"),
-            cot_mask=batch.get("cot_attention_mask"),
-            cot_phase_positions=batch.get("cot_phase_positions"),
+            cot_ids=cot_ids,
+            cot_mask=cot_mask,
+            cot_phase_positions=batch.get("cot_phase_positions") if cot_ids is not None else None,
             subtask_phase_id=batch.get("subtask_phase_id"),
             target_relative_pose_6d=batch.get("target_relative_pose_6d"),
             action_is_pad=batch.get("action_is_pad"),
             action_dim=self.config.action_feature.shape[0],
             loss_weights=weights,
+            aux={k: v for k, v in batch.items() if k.startswith("aux.")} or None,
+            future_latent=future_latent,
         )
         loss = out["loss"]
         if reduction == "none":
@@ -986,6 +1029,11 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
 
     def expert_usage(self) -> dict[int, Tensor]:
         return self.model.expert_usage()
+
+    def update_ema(self) -> None:
+        """Call after each optimiser step: advances the latent-CoT EMA target encoder."""
+        if self.model.latent_target is not None:
+            self.model.latent_target.update()
 
     def sample_actions_sde(self, batch: dict[str, Tensor], num_steps: int = 5, generator=None, return_cot: bool = False):
         """SDE rollout. With ``return_cot`` also returns the CoT that conditioned it (replayed in the update)."""

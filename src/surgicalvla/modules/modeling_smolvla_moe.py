@@ -429,12 +429,14 @@ class SmolVLAMoEModel(nn.Module):
                 object_tokens=objects.tokens, object_token_mask=objects.token_mask,
                 cot_ids=ids if ids.shape[1] else None,
             )
+            # use_cache=True: a prefix-only pass must run every layer as self-attention (the
+            # cache-filling path, as in prepare_prefix); the cache itself is discarded
             outputs, _ = self.vlm_with_expert.forward(
                 attention_mask=make_att_2d_masks(pad, att),
                 position_ids=torch.cumsum(pad, dim=1) - 1,
                 past_key_values=None,
                 inputs_embeds=[embs, None],
-                use_cache=False,
+                use_cache=True,
             )
             last = (cot_slice[1] if cot_slice is not None else pad.shape[1]) - 1
             hidden = outputs[0][:, last]

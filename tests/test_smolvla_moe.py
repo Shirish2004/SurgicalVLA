@@ -693,3 +693,13 @@ def test_load_smolvla_state_upcycles_dense_weights():
         )
         for expert in layer.mlp.routed_experts:
             assert torch.count_nonzero(expert.down_proj.weight) == 0
+
+
+def test_flow_time_matches_smolvla_beta_schedule():
+    """Audit A3: training time must follow SmolVLA's 0.999*Beta(1.5,1)+0.001, not U(0,1)."""
+    model = make_model(make_config())
+    torch.manual_seed(0)
+    t = model.sample_time(200_000, "cpu")
+    assert float(t.min()) >= 0.001 and float(t.max()) <= 1.0
+    # E[Beta(1.5,1)] = 0.6 -> 0.999*0.6+0.001 = 0.6004 (uniform would give 0.5)
+    assert abs(float(t.mean()) - 0.6004) < 3e-3

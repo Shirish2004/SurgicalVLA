@@ -8,7 +8,11 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
-from lerobot.policies.common.flow_matching import FlowConvention, make_flow_matching_inputs
+from lerobot.policies.common.flow_matching import (
+    FlowConvention,
+    make_flow_matching_inputs,
+    sample_time_beta,
+)
 from lerobot.policies.common.vla_utils import create_sinusoidal_pos_embedding, make_att_2d_masks
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy, pad_tensor
@@ -509,6 +513,14 @@ class SmolVLAMoEModel(nn.Module):
             layer.aux_loss = None
             layer.last_usage = None
 
+    def sample_time(self, bsize: int, device) -> Tensor:
+        """Flow time exactly as SmolVLA pretraining drew it: 0.999 * Beta(1.5, 1) + 0.001.
+
+        Audit A3: a uniform draw puts less mass near the noise end (t -> 1) than the
+        pretrained velocity field was fit on.
+        """
+        return sample_time_beta(bsize, device, alpha=1.5, beta=1.0, scale=0.999, offset=0.001)
+
     # ---------------------------------------------------------------- forward
     def forward(
         self,
@@ -534,7 +546,7 @@ class SmolVLAMoEModel(nn.Module):
         if noise is None:
             noise = torch.randn_like(actions)
         if time is None:
-            time = torch.rand(actions.shape[0], device=actions.device).clamp(0.001, 0.999)
+            time = self.sample_time(actions.shape[0], actions.device)
         if objects is None:
             objects = self._empty_objects(state)
         self._reset_moe_stats()

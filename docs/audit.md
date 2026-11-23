@@ -70,26 +70,41 @@ claims or efficiency, **L** = hygiene.
 
 Suite: **72 passed** (pre-audit: 62 passed, 2 failed). One commit per fix, on top of tag `pre-audit`.
 
-### 2.2 Open — to fix next (ordered by priority)
+### 2.2 Second round (fixed, with regression tests)
+
+| ID | Sev | Finding | Fix |
+|---|---|---|---|
+| A10 | **C** | RL configs mixed RoboTwin checkpoints/stats with the LIBERO env | Benchmark contracts (`rl/benchmarks.py`) validated at start-up; one config per benchmark (`configs/benchmarks/*`) |
+| A8 | H | RL replay used whichever CoT was cached | CoT recorded per chunk and replayed |
+| A9 | H | Log-probs included unexecuted chunk steps | Executed-step mask for old/new/reference log-probs |
+| A12 | M | No RL resume | Weights, optimizer, RNG, demo-stream position, atomic `rl_state.pt` |
+| A16 | H | CoT decoding used a causal prefix, training a bidirectional one | Decoding through `vlm_with_expert` with the training mask; teacher-forcing test |
+| A17 | M | `full_vlm_layers_for_cot` was a no-op | Removed (the linear-probe issue remains, see limitations) |
+| A22 | **C** | LIBERO adapter sent a 7-D state tiled to 8-D (dim 6 ≈ 70σ out of distribution) | 8-D LeRobot state, image flip, settle steps; equality test against LeRobot's `LiberoEnv` |
+| A23 | H | SFT checkpoints were saved without their normaliser (not evaluable by `lerobot-eval`) | Processors saved with every checkpoint |
+| A24 | H | Local LIBERO stack (MuJoCo 3.8.1) differs from LeRobot's canonical one (3.3.1): −8 pts on Spatial, one task 45 % → 0 % | Evaluate LIBERO in the canonical image (`--server`); see `docs/baselines.md` |
+| A25 | M | RL only possible on LIBERO (custom socket bridge) | Generic LeRobot rollout client: RL on LIBERO, RoboTwin, VLABench |
+
+### 2.3 Open — to fix next (ordered by priority)
 
 | ID | Sev | Finding | Evidence | Proposed fix |
 |---|---|---|---|---|
-| A10 | **C** | `configs/reinflow_grpo.yaml` runs LIBERO RL on `checkpoints/checkpoints/step_2000` — a **legacy `surgicalvla`, RoboTwin aloha 14-D joint-space** checkpoint with RoboTwin stats — and slices actions `[0:7]` for LIBERO's 7-D *EEF-delta* space. Camera map sends `agentview` into `cam_right_wrist`. The policy's action semantics do not match the env; no result from this config is interpretable. | [read] config + checkpoint `config.json` | Require `policy action_dim == env action_dim` and matching feature semantics; RL must start from a LIBERO-SFT checkpoint (or `HuggingFaceVLA/smolvla_libero`). |
+| ~~A10~~ (fixed, §2.2) | **C** | `configs/reinflow_grpo.yaml` runs LIBERO RL on `checkpoints/checkpoints/step_2000` — a **legacy `surgicalvla`, RoboTwin aloha 14-D joint-space** checkpoint with RoboTwin stats — and slices actions `[0:7]` for LIBERO's 7-D *EEF-delta* space. Camera map sends `agentview` into `cam_right_wrist`. The policy's action semantics do not match the env; no result from this config is interpretable. | [read] config + checkpoint `config.json` | Require `policy action_dim == env action_dim` and matching feature semantics; RL must start from a LIBERO-SFT checkpoint (or `HuggingFaceVLA/smolvla_libero`). |
 | A18 | **C** (for the paper's claims) | **No data pipeline produces** `cot_input_ids`, `subtask_phase_id`, `target_relative_pose_6d`, `obj_sam_feat`, `obj_pose_vec`. In SFT only `fm_loss` + `moe_aux_loss` are active; CoT, phase, pose and object branches receive **zero supervision**. Object tracker in `passthrough` mode returns a mock. | [read] grep over `src/`, `scripts/` | Build label generation (Phase 2): phase/CoT from LIBERO/RoboTwin task structure + gripper events; object pose from simulator state (train) and the tracker (eval), with the tracker-vs-GT gap reported. |
-| A8 | H | RL replay mismatch: `sde_log_probs` rebuilds the prefix using whatever `_cot_cache` is current, not the CoT used during the rollout. Ratios would compare different conditionals. Latent while A4 keeps CoT off. | [read] | Store CoT ids/positions in each rollout record and replay them. |
-| A9 | H | Log-probs (and thus ratios/KL) cover all 50 chunk steps but only `n_exec_steps=25` are executed. Unexecuted actions carry pure noise into the gradient (no effect on reward). | [read] `rollout.py`, `sde_log_probs` (no `action_is_pad`) | Mask log-probs to executed steps (pass `action_is_pad` from rollout). |
+| ~~A8~~ (fixed, §2.2) | H | RL replay mismatch: `sde_log_probs` rebuilds the prefix using whatever `_cot_cache` is current, not the CoT used during the rollout. Ratios would compare different conditionals. Latent while A4 keeps CoT off. | [read] | Store CoT ids/positions in each rollout record and replay them. |
+| ~~A9~~ (fixed, §2.2) | H | Log-probs (and thus ratios/KL) cover all 50 chunk steps but only `n_exec_steps=25` are executed. Unexecuted actions carry pure noise into the gradient (no effect on reward). | [read] `rollout.py`, `sde_log_probs` (no `action_is_pad`) | Mask log-probs to executed steps (pass `action_is_pad` from rollout). |
 | A11 | H | RL validation = **1 episode × ≤4 tasks × 1 fixed seed** (`evaluate`). Success-rate SE at n=4 is ±25 pp; no CIs; validation tasks default to the training tasks. | [read] | Separate eval script: all tasks × 50 init states × ≥3 seeds; Wilson CIs. |
 | A13 | H | MoE is not parameter- or FLOP-matched: each layer holds 1 shared + 4 routed *full-width* copies of the 4.42 M-param dense FFN (16 layers: 70.8 M → 354 M FFN params; model ≈ 450 M → ≈ 733 M). Active path = 3 FFNs/token = **3× dense FFN FLOPs**. A "MoE beats dense" claim would be confounded by capacity. | [verified] param count on `smolvla_base` | Fine-grained experts (width/3 each, sliced up-cycling) so active FLOPs = dense; dense baseline at matched total params for the other axis. |
 | A14 | M | Up-cycled routed experts are identical copies and the router is zero-init → uniform probs, `topk` tie-break deterministically picks experts {0, 1}; zero-init `down_proj` means routed output and router gradient are both 0 at step 0. Symmetry is broken only by the aux loss; experts 2–3 start starved. | [read] | Random row-slicing of the dense FFN per expert (Komatsuzaki et al. 2023 / Qwen-MoE style) + small router noise. |
 | A15 | M | Without CoT, `e_phase = null_phase` (a constant), so the 16 per-layer `phase_classifier`s learn only the label marginal; `phase_loss` is degenerate. Also 16 identical heads on one input is redundant. | [read] | Single phase head on a pooled prefix representation (works without CoT); CoT becomes an optional refinement. |
-| A16 | H | CoT train/inference attention mismatch: training puts CoT after a **bidirectional** image/text/object block (custom 2-D mask); `generate_cot` calls the HF text model with a 1-D mask, i.e. **fully causal** prefix (images cannot see the instruction). | [read] | Decode through `vlm_with_expert.forward` with the same 2-D mask and cache extension. |
-| A17 | M | `full_vlm_layers_for_cot` is a no-op: SmolVLA truncates the text model to 16 of 32 layers at load, so "full" = 16. `cot_lm_head` (copied from SmolVLM's `lm_head`, trained on layer-32 features) is applied to layer-16 features, and with `train_expert_only=True` the VLM is frozen → CoT is a **linear probe** on frozen mid-layer features. | [read] `smolvlm_with_expert.py:102–105` | Either LoRA on VLM layers for CoT, or reframe CoT as a *latent* plan (small decoder head), which is cheaper and honest. |
-| A12 | M | No RL resume (RNG, rollout state), no atomic checkpoint writes, no keep-last-k; RL `save_pretrained` + `rl_state.pt` only. | [read] | Phase 3 infra. |
+| ~~A16~~ (fixed, §2.2) | H | CoT train/inference attention mismatch: training puts CoT after a **bidirectional** image/text/object block (custom 2-D mask); `generate_cot` calls the HF text model with a 1-D mask, i.e. **fully causal** prefix (images cannot see the instruction). | [read] | Decode through `vlm_with_expert.forward` with the same 2-D mask and cache extension. |
+| ~~A17~~ (fixed, §2.2) | M | `full_vlm_layers_for_cot` is a no-op: SmolVLA truncates the text model to 16 of 32 layers at load, so "full" = 16. `cot_lm_head` (copied from SmolVLM's `lm_head`, trained on layer-32 features) is applied to layer-16 features, and with `train_expert_only=True` the VLM is frozen → CoT is a **linear probe** on frozen mid-layer features. | [read] `smolvlm_with_expert.py:102–105` | Either LoRA on VLM layers for CoT, or reframe CoT as a *latent* plan (small decoder head), which is cheaper and honest. |
+| ~~A12~~ (fixed, §2.2) | M | No RL resume (RNG, rollout state), no atomic checkpoint writes, no keep-last-k; RL `save_pretrained` + `rl_state.pt` only. | [read] | Phase 3 infra. |
 | A19 | L | Top-k Switch loss uses `f_i` with Σf = k, so its minimum is k, not 1 (scale only). | [read] | Normalize by k for logging clarity. |
 | A20 | M | SFT split (`checkpoints/split.json`) is by episode index; with ~23.6 k RoboTwin tasks, train and val share tasks/layouts → val loss measures interpolation, not generalisation. | [read] | Task-level held-out split for any generalisation claim. |
 | A21 | L | Trainer validation uses `τ ~ U` while training (now) uses Beta — val loss is a differently-weighted objective. Fine as long as reported as such. | [read] | Document; optionally fixed τ grid. |
 
-### 2.3 Verified correct (no change needed)
+### 2.4 Verified correct (no change needed)
 
 - Gaussian transition log-prob `−½Σ[(x−μ)²/σ² + 2 log σ + log 2π]`, masked to valid action dims (`masked_gaussian_log_prob`); σ_k = σ_θ′·√|Δτ| as specified.
 - Euler–Maruyama mean `μ_k = x_k + v_θ Δτ` with Δτ = −1/K under `NOISE_AT_ONE`.

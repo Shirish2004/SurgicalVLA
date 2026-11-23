@@ -34,6 +34,7 @@ from surgicalvla.rl.rollout import (
     env_action,
     frame_panel,
     lift,
+    policy_state,
     observation_batch,
     rollout_episode,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "group_weights",
     "kl_penalty",
     "lift",
+    "policy_state",
     "observation_batch",
     "rollout_episode",
     "sequence_log_prob",

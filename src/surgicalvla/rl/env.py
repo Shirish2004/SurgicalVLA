@@ -61,6 +61,8 @@ class Observation:
     language: str
     success: bool = False
     object_pose_6d: np.ndarray | None = None  # optional [xyz, r1..r6] handover target pose
+    # float32 (8,): LeRobot's LIBERO observation.state (eef xyz, axis-angle, 2 finger joints)
+    agent_pos: np.ndarray | None = None
 
     @classmethod
     def from_dict(cls, payload: dict) -> Observation:
@@ -71,6 +73,7 @@ class Observation:
             language=payload["language"],
             success=bool(payload.get("success", False)),
             object_pose_6d=None if pose is None else np.asarray(pose, dtype=np.float32),
+            agent_pos=None if payload.get("agent_pos") is None else np.asarray(payload["agent_pos"], dtype=np.float32),
         )
 
 

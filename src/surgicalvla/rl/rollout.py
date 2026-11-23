@@ -43,7 +43,36 @@ def lift(vector: np.ndarray | torch.Tensor, dim: int):
     return np.tile(vector, (*([1] * (vector.ndim - 1)), reps))[..., :dim]
 
 
-def observation_batch(config, obs, camera_map: dict[str, str], device="cpu") -> dict:
+def policy_state(obs, state_dim: int, *, lift_state: bool = False) -> np.ndarray:
+    """The simulator state in the layout the policy was trained on.
+
+    * ``state_dim == 8`` -> ``obs.agent_pos``: LeRobot's LIBERO state (eef pos,
+      axis-angle, 2 gripper joints), i.e. ``observation.state`` of the
+      ``lerobot/libero`` datasets that ``smolvla_libero`` was trained on.
+    * ``state_dim == len(obs.state)`` (7) -> the legacy OSC-style state.
+    * anything else only with ``lift_state=True`` (tile, see :func:`lift`).
+
+    Previously the 7-D state was always tiled to ``state_dim``, so an 8-D policy
+    silently got ``[pos, axis-angle, openness, pos_x]`` instead of the two finger
+    joints -- an input it never saw in training.
+    """
+    agent_pos = getattr(obs, "agent_pos", None)
+    if state_dim == 8 and agent_pos is not None:
+        return np.asarray(agent_pos, dtype=np.float32)
+    state = np.asarray(obs.state, dtype=np.float32)
+    if state.shape[-1] == state_dim:
+        return state
+    if lift_state:
+        return lift(state, state_dim).astype(np.float32)
+    raise ValueError(
+        f"policy expects a {state_dim}-D state but the simulator provides "
+        f"{state.shape[-1]}-D (and {'no' if agent_pos is None else len(agent_pos)}-D agent_pos). "
+        "Refusing to tile silently: use a checkpoint trained on this simulator's state, or pass "
+        "lift_state=True if the projection is intended."
+    )
+
+
+def observation_batch(config, obs, camera_map: dict[str, str], device="cpu", *, lift_state: bool = False) -> dict:
     """One simulator observation -> the raw batch dict ``preprocessor`` expects.
 
     Batched on purpose: ``AddBatchDimensionProcessorStep`` only adds dims to 1-D
@@ -65,8 +94,8 @@ def observation_batch(config, obs, camera_map: dict[str, str], device="cpu") -> 
         tensor = torch.from_numpy(np.ascontiguousarray(image)).permute(2, 0, 1).float().div_(255.0)
         batch[policy_key] = tensor.unsqueeze(0)
     state_dim = int(config.input_features["observation.state"].shape[0])
-    state = np.asarray(obs.state, dtype=np.float32)
-    batch["observation.state"] = torch.from_numpy(lift(state, state_dim)).float().unsqueeze(0)
+    state = policy_state(obs, state_dim, lift_state=lift_state)
+    batch["observation.state"] = torch.from_numpy(state).float().unsqueeze(0)
     batch["task"] = [obs.language]
     return {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
 
@@ -161,6 +190,7 @@ def rollout_episode(
     generator: torch.Generator | None = None,
     collect: bool = True,
     sde_steps: int = 0,
+    lift_state: bool = False,
 ) -> EpisodeResult:
     """Roll the policy out in the simulator and return the recorded decision points.
 
@@ -186,7 +216,7 @@ def rollout_episode(
         while True:
             if max_decisions is not None and decisions >= max_decisions:
                 break
-            raw = observation_batch(cfg, obs, camera_map, device=device)
+            raw = observation_batch(cfg, obs, camera_map, device=device, lift_state=lift_state)
             batch = preprocessor(raw)
             noise = torch.randn(
                 1, cfg.chunk_size, cfg.max_action_dim, device=device, generator=generator, dtype=torch.float32

@@ -33,9 +33,20 @@ Commands (JSON per line, request -> response):
 connection.
 
 An observation is ``{"images": {camera: uint8 HxWx3}, "state": float32 (7,),
-"language": str, "success": bool}`` where ``state`` is laid out like a
-``OSC_POSE`` action: end-effector position, axis-angle rotation, gripper
-openness in [-1, 1] (+1 fully open).
+"agent_pos": float32 (8,), "language": str, "success": bool}``:
+
+* ``agent_pos`` is the state LeRobot's LIBERO integration builds and the
+  ``lerobot/libero`` / ``HuggingFaceVLA/libero`` datasets store as
+  ``observation.state`` (what ``smolvla_libero`` was trained on): end-effector
+  position (3), axis-angle rotation (3, robosuite ``quat2axisangle``), gripper
+  joint positions (2).
+* ``state`` is the legacy 7-D layout of an ``OSC_POSE`` action: end-effector
+  position, axis-angle rotation, gripper openness in [-1, 1] (+1 fully open).
+
+By default the server follows LeRobot's LIBERO conventions (``--flip-images``,
+``--settle-steps 10``): images are rotated 180 degrees as in the LeRobot
+datasets, and after placing the init state the simulator takes 10 no-op steps
+so objects settle before the first observation.
 """
 
 from __future__ import annotations
@@ -151,6 +162,28 @@ def quat_to_axis_angle(quat: np.ndarray) -> np.ndarray:
     return (q[:3] / s) * angle
 
 
+def lerobot_agent_pos(obs: dict) -> np.ndarray:
+    """8-D ``observation.state`` exactly as LeRobot's LIBERO integration builds it.
+
+    ``[eef_pos (3), axis_angle(eef_quat) (3), gripper_qpos (2)]`` (see
+    ``lerobot/sim/integrations/libero.py::canonical_observation``). This is what
+    ``lerobot/smolvla_libero`` was trained on; the 7-D :func:`proprio_state`
+    replaces the two finger joints with one openness scalar and is a different
+    input distribution.
+    """
+    return np.concatenate(
+        [
+            np.asarray(obs["robot0_eef_pos"], dtype=np.float32),
+            quat_to_axis_angle(obs["robot0_eef_quat"]).astype(np.float32),
+            np.asarray(obs["robot0_gripper_qpos"], dtype=np.float32),
+        ]
+    ).astype(np.float32)
+
+
+# LeRobot's ``get_libero_dummy_action``: zero motion, gripper open.
+DUMMY_ACTION = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
+
+
 def proprio_state(obs: dict) -> np.ndarray:
     qpos = np.asarray(obs["robot0_gripper_qpos"], dtype=np.float32)
     openness = float(np.clip((qpos[0] - qpos[1]) / GRIPPER_MAX_WIDTH, 0.0, 1.0)) * 2.0 - 1.0
@@ -164,10 +197,19 @@ def proprio_state(obs: dict) -> np.ndarray:
 
 
 class Simulator:
-    def __init__(self, camera_height: int = 128, camera_width: int = 128, max_cached_envs: int = 8):
+    def __init__(
+        self,
+        camera_height: int = 128,
+        camera_width: int = 128,
+        max_cached_envs: int = 8,
+        flip_images: bool = True,
+        settle_steps: int = 10,
+    ):
         self.camera_height = camera_height
         self.camera_width = camera_width
         self.max_cached_envs = max_cached_envs
+        self.flip_images = bool(flip_images)
+        self.settle_steps = int(settle_steps)
         self.envs: OrderedDict[str, object] = OrderedDict()
         self.tasks: dict[str, dict] = {}
         self.init_states: dict[str, np.ndarray] = {}
@@ -218,6 +260,8 @@ class Simulator:
         env.reset()
         idx = int(episode) % len(states)
         obs = env.set_init_state(states[idx])
+        for _ in range(self.settle_steps):
+            obs, _, _, _ = env.step(np.asarray(DUMMY_ACTION, dtype=np.float32))
         self.current = env
         self.current_task = task
         return self.observation(obs, task)
@@ -234,13 +278,19 @@ class Simulator:
         horizon_done = bool(getattr(env.env, "timestep", 0) >= getattr(env.env, "horizon", 1))
         return self.observation(obs, self.current_task), float(reward), bool(done) or horizon_done, success
 
+    def _image(self, image) -> np.ndarray:
+        image = np.asarray(image, dtype=np.uint8)
+        # LeRobot rotates LIBERO renders by 180 degrees (flip H and W).
+        return np.ascontiguousarray(image[::-1, ::-1]) if self.flip_images else image
+
     def observation(self, obs: dict, task: dict) -> dict:
         return {
             "images": {
-                "agentview": np.asarray(obs["agentview_image"], dtype=np.uint8),
-                "eye_in_hand": np.asarray(obs["robot0_eye_in_hand_image"], dtype=np.uint8),
+                "agentview": self._image(obs["agentview_image"]),
+                "eye_in_hand": self._image(obs["robot0_eye_in_hand_image"]),
             },
             "state": proprio_state(obs),
+            "agent_pos": lerobot_agent_pos(obs),
             "language": task["language"],
             "success": bool(self.current.check_success()) if self.current is not None else False,
         }
@@ -257,7 +307,13 @@ class Simulator:
 
 # -------------------------------------------------------------------------- server
 def serve(protocol, args):
-    sim = Simulator(args.camera_height, args.camera_width, args.max_cached_envs)
+    sim = Simulator(
+        args.camera_height,
+        args.camera_width,
+        args.max_cached_envs,
+        flip_images=args.flip_images,
+        settle_steps=args.settle_steps,
+    )
 
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -337,6 +393,18 @@ def main():
     parser.add_argument("--camera-height", type=int, default=128)
     parser.add_argument("--camera-width", type=int, default=128)
     parser.add_argument("--max-cached-envs", type=int, default=8)
+    parser.add_argument(
+        "--flip-images",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="rotate renders 180 degrees like LeRobot's LIBERO datasets (default: on)",
+    )
+    parser.add_argument(
+        "--settle-steps",
+        type=int,
+        default=10,
+        help="no-op steps after placing the init state, as LeRobot's num_steps_wait (default: 10)",
+    )
     args = parser.parse_args()
 
     os.environ.setdefault("MUJOCO_GL", "egl")

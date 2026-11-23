@@ -1,5 +1,7 @@
-# SFT on LIBERO. Derived from configs/train.yaml; only dataset-specific fields differ.
-#   python3 scripts/benchmark.py train sft --benchmark libero --policy surgicalvla
+# SFT stage for LIBERO (SurgicalVLA = smolvla_moe). One model per benchmark: outputs/libero/sft.
+#   python3 scripts/benchmark.py train sft --benchmark libero
+# Branches without a training signal yet (CoT, phase, pose, object tokens) are
+# EXPERIMENTAL: see docs/limitations.md before claiming them.
 project:
   wandb_project: "surgical-vla"      # W&B entity/project grouping for runs
   wandb_mode: "online"                # "online" | "offline" | "disabled"; "disabled" skips W&B entirely
@@ -15,7 +17,7 @@ run:
   steps: 50000                       # total training steps
   batch_size: 24
   device: "cuda"                     # "cuda" or "cpu"
-  ckpt_dir: "./checkpoints"
+  ckpt_dir: "outputs/libero/sft"
   streaming: false                   # true -> pull frames from the Hub on demand
   streaming_buffer_size: 1000        # shuffle-buffer size, in frames, when streaming
   streaming_seed: 42                 # seed for the streaming shuffle buffer
@@ -24,9 +26,9 @@ run:
 
 # lerobot/libero (v3.0): 1,693 episodes / 273k frames / 40 tasks, single Panda arm,
 # 8-D state (eef pos, axis-angle, 2 finger joints), 7-D eef-delta actions, 2 cameras.
-# Same dataset lerobot/smolvla_libero was trained on. Pin --dataset revision when reporting.
+# Same dataset lerobot/smolvla_libero was trained on.
 dataset:
-  root: null                          # stream / cache from the Hub (repo id given on the CLI)
+  root: null
   camera_map:                         # dataset key -> policy key
     observation.images.image: observation.images.camera1
     observation.images.image2: observation.images.camera2
@@ -37,7 +39,7 @@ dataset:
 # max_action_seq key here. Camera keys/counts are also derived from the dataset
 # (see dataset.camera_map above), not listed here.
 model:
-  policy_type: "surgical"            # "surgical" (skill-routed) | "smolvla_moe" (object-6D + CoT + phase MoE)
+  policy_type: "smolvla_moe"            # "surgical" (skill-routed) | "smolvla_moe" (object-6D + CoT + phase MoE)
   vlm_model_name: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
   chunk_size: 50
   n_action_steps: 25
@@ -51,7 +53,7 @@ model:
   add_image_special_tokens: true
   train_expert_only: true
   num_experts: 5
-  gripper_dims: [6]                  # single Panda arm
+  gripper_dims: [6]
   scheduler_decay_steps : 50000
 # MoE action expert (keys here are SurgicalVLAConfig field names).
 moe:

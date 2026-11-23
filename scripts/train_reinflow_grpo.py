@@ -27,6 +27,9 @@ from surgicalvla.data.dataset import load_stats
 from surgicalvla.modules.configuration_smolvla_moe import SmolVLAMoEConfig
 from surgicalvla.modules.modeling_smolvla_moe import SmolVLAMoEPolicy
 from surgicalvla.rl.benchmarks import LIBERO, BenchmarkMismatch, get_benchmark, validate_rl_setup
+from surgicalvla.rl.joint import MODES, DemoStream, LambdaSchedule, combine_gradients, make_demo_stream, take_grads
+from surgicalvla.rl.lerobot_sim import LeRobotSimClient
+from surgicalvla.utils.checkpoints import latest_pretrained
 from surgicalvla.rl import (
     LiberoClient,
     compute_handover_reward,
@@ -39,11 +42,16 @@ from surgicalvla.utils.config import load_config
 from surgicalvla.utils.logrun import ExperimentLogger
 
 
+def env_section(cfg: dict) -> dict:
+    """The simulator section (``env:``; ``libero:`` kept for older configs)."""
+    return cfg.get("env") or cfg["libero"]
+
+
 def resolve_checkpoint(cfg: dict) -> Path:
-    """Local checkpoint dir, or a Hub repo id downloaded at ``checkpoint_revision``."""
+    """Local checkpoint (or training output dir), or a Hub repo id at ``checkpoint_revision``."""
     ref = str(cfg["checkpoint"])
     if Path(ref).is_dir():
-        return Path(ref)
+        return latest_pretrained(Path(ref))
     from huggingface_hub import snapshot_download
 
     return Path(snapshot_download(ref, revision=cfg.get("checkpoint_revision")))
@@ -60,11 +68,8 @@ def checkpoint_dataset_id(checkpoint: Path) -> str | None:
 def build_policy(cfg: dict, device: str) -> SmolVLAMoEPolicy:
     """Load the SFT checkpoint and its normalisation, refusing cross-benchmark setups (A10)."""
     spec = get_benchmark(cfg.get("benchmark", ""))
-    if spec is not LIBERO:
-        raise BenchmarkMismatch(
-            f"benchmark={spec.name!r}, but this script drives the LIBERO simulator only. "
-            "RoboTwin RL needs a RoboTwin env client and must stay in its 14-D joint space."
-        )
+    if env_section(cfg).get("backend", "lerobot") == "socket" and spec is not LIBERO:
+        raise BenchmarkMismatch("the socket backend is the LIBERO bridge only; use backend: lerobot")
     checkpoint = resolve_checkpoint(cfg)
     policy_type = json.loads((checkpoint / "config.json").read_text()).get("type")
     if policy_type == "smolvla_moe":
@@ -80,7 +85,7 @@ def build_policy(cfg: dict, device: str) -> SmolVLAMoEPolicy:
     action_dim = int(policy.config.action_feature.shape[0])
     state_dim = int(policy.config.robot_state_feature.shape[0])
     policy.config.device = str(device)
-    lc = cfg["libero"]
+    lc = env_section(cfg)
 
     # Normalisation must be exactly the SFT one: use the checkpoint's saved processors
     # when it has them; a separate stats file is only a fallback and is checked too.
@@ -158,7 +163,7 @@ def _reward(cfg: dict, result) -> float:
 
 
 def rollout_group(policy, client, cfg, task, *, device, rng, frames=False) -> list:
-    lc, rl = cfg["libero"], cfg["rl"]
+    lc, rl = env_section(cfg), cfg["rl"]
     # GRPO's baseline is the mean over rollouts *from the same start*: one initial
     # state per group, only the policy's SDE noise (and sim seed) varies inside it.
     # Audit A7: drawing a fresh init state per member made the advantage measure
@@ -184,6 +189,7 @@ def rollout_group(policy, client, cfg, task, *, device, rng, frames=False) -> li
             action_scale=float(lc["action_scale"]),
             gripper_sign=float(lc["gripper_sign"]),
             env_gripper_dims=tuple(lc["env_gripper_dims"]),
+            action_clip=lc.get("action_clip", 1.0),
             frame_every=int(lc["frame_every"]) if frames else 0,
             generator=generator,
             sde_steps=int(rl.get("sde_steps", 5)),
@@ -194,7 +200,7 @@ def rollout_group(policy, client, cfg, task, *, device, rng, frames=False) -> li
 
 
 def evaluate(policy, client, cfg, tasks, *, device):
-    lc = cfg["libero"]
+    lc = env_section(cfg)
     frames, successes, rewards, lengths = [], [], [], []
     for task in tasks:
         result = rollout_episode(
@@ -213,6 +219,7 @@ def evaluate(policy, client, cfg, tasks, *, device):
             action_scale=float(lc["action_scale"]),
             gripper_sign=float(lc["gripper_sign"]),
             env_gripper_dims=tuple(lc["env_gripper_dims"]),
+            action_clip=lc.get("action_clip", 1.0),
             frame_every=int(lc["frame_every"]),
             collect=False,
         )
@@ -228,7 +235,25 @@ def evaluate(policy, client, cfg, tasks, *, device):
     }, frames
 
 
-def grpo_update(policy, reference, optimizer, pairs, cfg, *, clip_norm: float):
+def demo_fm_loss(policy, demo: DemoStream) -> tuple[torch.Tensor, dict]:
+    """Flow-matching loss on one streamed demonstration batch (the SFT objective)."""
+    batch = policy._rl_preprocessor(demo.next_batch())
+    loss, metrics = policy.forward(batch)
+    return loss, metrics
+
+
+def sft_update(policy, optimizer, demo: DemoStream, *, clip_norm: float) -> dict:
+    """One pure flow-matching step (interleaved mode)."""
+    policy.train()
+    optimizer.zero_grad(set_to_none=True)
+    loss, _ = demo_fm_loss(policy, demo)
+    loss.backward()
+    grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), clip_norm)
+    optimizer.step()
+    return {"sft/fm_loss": float(loss.detach()), "sft/grad_norm": float(grad_norm)}
+
+
+def grpo_update(policy, reference, optimizer, pairs, cfg, *, clip_norm: float, demo: DemoStream | None = None, lam: float = 0.0):
     """One clipped-surrogate step over ``(record, advantage)`` pairs.
 
     Each record carries the SDE latents and the behaviour log-probs from the rollout.
@@ -248,12 +273,17 @@ def grpo_update(policy, reference, optimizer, pairs, cfg, *, clip_norm: float):
         outs = []
         for record, adv in items:
             batch = {k: (v.to(policy.config.device) if torch.is_tensor(v) else v) for k, v in record.batch.items()}
-            new, entropy = policy.sde_log_probs(batch, record.latents, num_steps=num_steps, return_entropy=True)
-            old = record.log_probs.to(new.device)
+            # Only executed chunk steps carry reward signal (A9); replay the rollout's CoT (A8).
+            pad, cot = record.exec_pad(), record.cot
+            kw = dict(num_steps=num_steps, action_is_pad=pad, cot=cot)
+            with torch.no_grad():
+                # one optimiser step per rollout batch: the current weights are the behaviour policy
+                old = policy.sde_log_probs(batch, record.latents, **kw)
+            new, entropy = policy.sde_log_probs(batch, record.latents, return_entropy=True, **kw)
             ref = None
             if reference is not None and kl_coef > 0:
                 with torch.no_grad():
-                    ref = reference.sde_log_probs(batch, record.latents, num_steps=num_steps)
+                    ref = reference.sde_log_probs(batch, record.latents, **kw)
             outs.append(
                 grpo_surrogate(
                     new,
@@ -272,10 +302,27 @@ def grpo_update(policy, reference, optimizer, pairs, cfg, *, clip_norm: float):
         for out in outs:
             for key, value in out.items():
                 logs[f"rl/{key}"] = logs.get(f"rl/{key}", 0.0) + float(value.detach()) * share / len(items)
+    if demo is not None and lam > 0:
+        # joint mode: keep the two gradients apart long enough to measure them
+        params = [p for p in policy.parameters() if p.requires_grad]
+        g_rl = take_grads(params)
+        fm_loss, _ = demo_fm_loss(policy, demo)
+        fm_loss.backward()
+        g_fm = take_grads(params)
+        stats = combine_gradients(params, g_rl, g_fm, lam)
+        logs["joint/fm_loss"] = float(fm_loss.detach())
+        logs["joint/rl_loss"] = logs.get("rl/loss", 0.0)
+        logs.update({f"joint/{k}": v for k, v in stats.items()})
     grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), clip_norm)
     optimizer.step()
     logs["rl/grad_norm"] = float(grad_norm)
     return logs
+
+
+def make_client(cfg: dict) -> LeRobotSimClient:
+    """The benchmark's simulator built as lerobot-eval builds it (local, or Docker-served via endpoint)."""
+    lc = env_section(cfg)
+    return LeRobotSimClient(cfg["benchmark"], env_kwargs=lc.get("env_kwargs") or {}, endpoint=lc.get("endpoint"))
 
 
 def main():
@@ -286,7 +333,7 @@ def main():
     cfg = load_config(args.config, args.overrides)
 
     run_cfg, proj_cfg = cfg.get("run", {}), cfg.get("project", {})
-    lc, rl = cfg["libero"], cfg["rl"]
+    lc, rl = env_section(cfg), cfg["rl"]
     device = str(run_cfg.get("device", "cuda"))
     out_dir = run_cfg.get("out_dir", "runs/reinflow_grpo")
     os.makedirs(out_dir, exist_ok=True)
@@ -295,12 +342,32 @@ def main():
     np.random.seed(int(run_cfg.get("seed", 0)))
     rng = np.random.default_rng(int(run_cfg.get("seed", 0)))
 
+    resume_state = None
+    if run_cfg.get("resume"):
+        resume_state = torch.load(os.path.join(out_dir, "rl_state.pt"), weights_only=False)
+        cfg["checkpoint"] = resume_state["policy_dir"]  # weights saved with that iteration
     policy = build_policy(cfg, device)
     optimizer, clip_norm = build_optimizer(policy, run_cfg.get("lr", 1e-5))
+    tcfg = cfg.get("training") or {}
+    mode = tcfg.get("mode", "sequential")
+    if mode not in MODES:
+        raise ValueError(f"training.mode must be one of {MODES}, got {mode!r}")
+    schedule = LambdaSchedule(**(tcfg.get("lambda") or {}))
+    demo = make_demo_stream(policy.config, cfg["demo"], int(run_cfg.get("seed", 0))) if mode != "sequential" else None
+    start_it = 1
+    if resume_state is not None:
+        state = resume_state
+        optimizer.load_state_dict(state["optimizer"])
+        torch.set_rng_state(state["torch_rng"])
+        rng.bit_generator.state = state["numpy_rng"]
+        if demo is not None and state.get("demo") is not None:
+            demo.load_state_dict(state["demo"])
+        start_it = int(state["iteration"]) + 1
+        print(f"resumed at iteration {start_it} (mode={mode})")
     reference = free_reference(policy) if float(rl.get("kl_coef", 0.0)) > 0 else None
     print(
         f"policy: {cfg['checkpoint']}\n"
-        f"actions: {policy.config.action_feature.shape[0]}-D -> {lc['action_slice']} for LIBERO\n"
+        f"benchmark: {cfg['benchmark']}  actions: {policy.config.action_feature.shape[0]}-D\n"
         f"sde steps: {rl.get('sde_steps', 5)}  group: {rl['group_size']}  kl_coef: {rl.get('kl_coef', 0.0)}"
     )
 
@@ -315,7 +382,7 @@ def main():
         mode=None if proj_cfg.get("wandb_mode", "disabled") == "disabled" else proj_cfg.get("wandb_mode"),
     )
 
-    client = LiberoClient.spawn(
+    client = make_client(cfg) if lc.get("backend", "lerobot") != "socket" else LiberoClient.spawn(
         camera_height=int(lc["camera_height"]),
         camera_width=int(lc["camera_width"]),
         max_cached_envs=int(lc.get("max_cached_envs", 8)),
@@ -331,7 +398,7 @@ def main():
         print(f"{len(tasks)} train task(s), {len(val_tasks)} val task(s) in {lc['suite']}")
 
         iters = int(run_cfg.get("iters", 200))
-        for it in range(1, iters + 1):
+        for it in range(start_it, iters + 1):
             task = tasks[int(rng.integers(0, len(tasks)))]
             episodes = rollout_group(policy, client, cfg, task, device=device, rng=rng)
             rewards = [ep.reward for ep in episodes]
@@ -350,7 +417,13 @@ def main():
                 "rl/samples": float(len(pairs)),
             }
             if pairs and float(advantages.abs().sum()) > 0:
-                metrics.update(grpo_update(policy, reference, optimizer, pairs, cfg, clip_norm=clip_norm))
+                lam = schedule(it) if mode == "joint" else 0.0
+                metrics.update(
+                    grpo_update(policy, reference, optimizer, pairs, cfg, clip_norm=clip_norm, demo=demo, lam=lam)
+                )
+            if mode == "interleaved" and it % int(tcfg.get("interleave_every", 1)) == 0:
+                for _ in range(int(tcfg.get("sft_steps", 1))):
+                    metrics.update(sft_update(policy, optimizer, demo, clip_norm=clip_norm))
                 usage = policy.expert_usage()
                 if usage:
                     logger.log_expert_usage(usage, it)
@@ -375,8 +448,22 @@ def main():
             if it % int(run_cfg.get("save_every", 25)) == 0:
                 ckpt_dir = os.path.join(out_dir, f"step_{it:06d}")
                 policy.save_pretrained(ckpt_dir)
-                torch.save({"iteration": it, "optimizer": optimizer.state_dict()}, os.path.join(out_dir, "rl_state.pt"))
+                state = {
+                    "iteration": it,
+                    "optimizer": optimizer.state_dict(),
+                    "torch_rng": torch.get_rng_state(),
+                    "numpy_rng": rng.bit_generator.state,
+                    "demo": None if demo is None else demo.state_dict(),
+                    "policy_dir": ckpt_dir,
+                }
+                tmp = os.path.join(out_dir, "rl_state.pt.tmp")
+                torch.save(state, tmp)
+                os.replace(tmp, os.path.join(out_dir, "rl_state.pt"))  # atomic
                 print(f"           saved {ckpt_dir}")
+        # Only a completed run gets a final/ (the pipeline's hand-off point).
+        final = os.path.join(out_dir, "final")
+        policy.save_pretrained(final)
+        print(f"saved {final}")
     finally:
         client.close()
         logger.close()

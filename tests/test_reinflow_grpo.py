@@ -157,3 +157,37 @@ def test_grpo_group_shares_initial_state(monkeypatch):
     assert len(episodes) == 6
     assert len({c["episode"] for c in calls}) == 1, "group members must share the init state"
     assert len({c["seed"] for c in calls}) == 6, "noise seeds must differ within a group"
+
+
+def test_grpo_update_replays_exec_mask_and_rollout_cot():
+    """Audit A8/A9: old, new and reference log-probs all use the executed-step mask
+    and the CoT recorded at rollout time."""
+    from types import SimpleNamespace
+
+    import scripts.train_reinflow_grpo as trg
+    from surgicalvla.rl.rollout import ChunkRecord
+
+    calls = []
+
+    class FakePolicy(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.w = torch.nn.Parameter(torch.zeros(()))
+            self.config = SimpleNamespace(device="cpu")
+
+        def sde_log_probs(self, batch, latents, num_steps=5, return_entropy=False, action_is_pad=None, cot=None):
+            calls.append((action_is_pad.clone(), cot))
+            lp = (self.w - 1.0).expand(num_steps, 1).clone()
+            return (lp, torch.zeros(num_steps, 1)) if return_entropy else lp
+
+    cot = (torch.tensor([[1, 2]]), torch.ones(1, 2, dtype=torch.bool), None)
+    rec = ChunkRecord(batch={}, chunk=torch.zeros(6, 7), actions=None, latents=torch.zeros(4, 1, 6, 7), n_exec=2, cot=cot)
+    pol = FakePolicy()
+    opt = torch.optim.SGD(pol.parameters(), lr=0.1)
+    cfg = {"rl": {"sde_steps": 3, "kl_coef": 0.1}, "run": {"micro_batch": 1}}
+    logs = trg.grpo_update(pol, FakePolicy(), opt, [(rec, 1.0)], cfg, clip_norm=1.0)
+    assert len(calls) == 3  # old, new, reference
+    for pad, c in calls:
+        assert pad.tolist() == [[False, False, True, True, True, True]]
+        assert c is cot
+    assert "rl/loss" in logs

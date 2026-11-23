@@ -16,7 +16,7 @@ from surgicalvla.modules.modeling_smolvla_moe import SmolVLAMoEPolicy
 from surgicalvla.modules.policy import SurgicalVLAConfig, SurgicalVLAPolicy
 from surgicalvla.training.trainer import Trainer
 from surgicalvla.utils.config import load_config, warn_unknown
-from surgicalvla.utils.splits import load_split, save_split, split_episodes
+from surgicalvla.utils.splits import block_episodes, load_split, save_split, split_episodes
 
 # yaml key -> SurgicalVLAConfig field, for names that don't match 1:1
 MOE_ALIASES = {
@@ -144,14 +144,21 @@ def main():
     train_eps = val_eps = None
     if streaming and val_fraction > 0:
         warnings.warn("Streaming mode has no episode filtering; validation is disabled.", stacklevel=2)
-    elif val_fraction > 0:
-        split_path = os.path.join(output_dir, "split.json")
-        if os.path.exists(split_path):
-            train_eps, val_eps = load_split(split_path)
-        else:
+    else:
+        blocks = ds_cfg.get("episode_blocks")
+        pool = None
+        if blocks:  # e.g. RoboTwin demo_clean: first 50 of every 550-episode task block
             meta = LeRobotDatasetMetadata(args.repo_id, root=root)
-            train_eps, val_eps = split_episodes(meta.total_episodes, val_fraction, ds_cfg.get("split_seed", 0))
+            pool = block_episodes(meta.total_episodes, int(blocks["block"]), int(blocks["take"]))
+        split_path = os.path.join(output_dir, "split.json")
+        if val_fraction > 0 and os.path.exists(split_path):
+            train_eps, val_eps = load_split(split_path)
+        elif val_fraction > 0:
+            meta = LeRobotDatasetMetadata(args.repo_id, root=root)
+            train_eps, val_eps = split_episodes(meta.total_episodes, val_fraction, ds_cfg.get("split_seed", 0), pool=pool)
             save_split(split_path, train_eps, val_eps)
+        else:
+            train_eps = pool
 
     dataset = build_dataset(
         args.repo_id,

@@ -1,0 +1,85 @@
+# RL stage for VLABench: ReinFlow-GRPO from this benchmark's own SFT model.
+#   python3 scripts/benchmark.py train rl --benchmark vlabench
+# The checkpoint, its normalisation and the simulator must all belong to vlabench
+# (src/surgicalvla/rl/benchmarks.py). Reference start point for ablations:
+#   checkpoint: "lerobot/smolvla_vlabench"  checkpoint_revision: "7ef370813eb35823caa94088b50f5389a51e4c47"
+
+project:
+  wandb_project: "surgical-vla"
+  wandb_mode: "online"
+  entity: null
+  run_name: "surgical_vla_vlabench_rl"
+  notes: "ReinFlow-GRPO over flow-matching SDE trajectories (VLABench)"
+  tags: ["rl", "grpo", "reinflow", "vlabench"]
+
+benchmark: vlabench
+checkpoint: "outputs/vlabench/sft"   # newest saved policy under this dir is used
+checkpoint_revision: null
+stats:
+  path: null                        # null -> the checkpoint's own saved normaliser
+
+env:
+  backend: lerobot                  # LeRobot make_env (as lerobot-eval); "socket" = legacy LIBERO bridge
+  endpoint: "tcp/127.0.0.1:7448"
+  env_kwargs: {}
+  suite: "select_fruit,select_toy,select_chemistry_tube,add_condiment,select_book,select_painting,select_drink,insert_flower,select_billiards,select_ingredient,select_mahjong,select_poker,density_qa,friction_qa,magnetism_qa,reflection_qa,simple_cuestick_usage,simple_seesaw_usage,sound_speed_qa,thermal_expansion_qa,weight_qa"
+  tasks: null
+  val_tasks: null
+  camera_map:                       # policy camera -> simulator camera (one each)
+    observation.images.camera1: image
+    observation.images.camera2: second_image
+    observation.images.camera3: wrist_image
+  action_slice: [0, 7]
+  action_scale: 1.0
+  action_clip: null   # absolute eef pose: never clip
+  gripper_sign: 1.0
+  env_gripper_dims: [6]
+  n_exec_steps: 50
+  max_steps: 500
+  max_decisions: 10
+  frame_every: 5
+
+# Joint SFT + RL. sequential = RL only from the SFT checkpoint; joint = GRPO + lambda_t * FM
+# on a streamed demo batch; interleaved = sft_steps FM updates every interleave_every RL updates.
+training:
+  mode: sequential                  # sequential | joint | interleaved
+  lambda: {start: 1.0, end: 0.1, kind: cosine, steps: 200}
+  interleave_every: 1
+  sft_steps: 1
+
+demo:                               # streamed from the Hub; position saved in rl_state.pt
+  repo_id: "lerobot/vlabench_unified"
+  revision: null
+  batch_size: 8
+  buffer_size: 1000
+  episode_blocks: null
+  rename_map:
+    observation.images.image: observation.images.camera1
+    observation.images.second_image: observation.images.camera2
+    observation.images.wrist_image: observation.images.camera3
+
+rl:
+  group_size: 8                     # G rollouts per initial state
+  sde_steps: 5
+  adv_eps: 1.0e-8
+  clip: 0.2
+  kl_coef: 0.01                     # k3 KL against the frozen SFT reference
+  entropy_coef: 0.001
+  success_reward: 1.0
+  position_weight: 0.3
+  orientation_weight: 0.3
+  target_pose_6d: null
+  val_seed: 1234
+  max_val_tasks: 4
+  val_frames_per_task: 4
+
+run:
+  iters: 200
+  lr: 1.0e-6
+  micro_batch: 4
+  device: "cuda"
+  val_every: 10
+  save_every: 25
+  out_dir: "outputs/vlabench/rl"
+  seed: 0
+  resume: false                     # true -> continue from outputs/vlabench/rl/rl_state.pt

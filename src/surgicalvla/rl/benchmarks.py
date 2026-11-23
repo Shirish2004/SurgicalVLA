@@ -32,7 +32,8 @@ LIBERO = BenchmarkSpec(
     action_dim=7,
     state_layout="eef_pos(3) axis_angle(3) gripper_qpos(2)  [LeRobot LIBERO observation.state]",
     action_layout="delta eef_pos(3) delta axis_angle(3) gripper(1, -1 open / +1 close)  [OSC_POSE]",
-    cameras=("agentview", "eye_in_hand"),
+    # LeRobot env names (image, image2) and the legacy socket bridge's names
+    cameras=("image", "image2", "agentview", "eye_in_hand"),
     datasets=("lerobot/libero", "HuggingFaceVLA/libero"),
     gripper_dims=(6,),
 )
@@ -44,11 +45,27 @@ ROBOTWIN = BenchmarkSpec(
     state_layout="aloha bimanual joint positions: left arm(6) left gripper(1) right arm(6) right gripper(1)",
     action_layout="absolute aloha joint positions, same layout as the state",
     cameras=("head_camera", "left_camera", "right_camera"),
-    datasets=("lerobot/robotwin_unified",),
+    # pepijn223/robotwin_unified_v3: what the reference lerobot/smolvla_robotwin was trained on
+    datasets=("lerobot/robotwin_unified", "pepijn223/robotwin_unified_v3"),
     gripper_dims=(6, 13),
 )
 
-BENCHMARKS = {spec.name: spec for spec in (LIBERO, ROBOTWIN)}
+VLABENCH = BenchmarkSpec(
+    name="vlabench",
+    state_dim=7,
+    action_dim=7,
+    state_layout="eef_pos(3) eef_euler(3) gripper_opening(1)  [LeRobot VLABench conventions()]",
+    action_layout="absolute eef pose, same layout as the state",
+    cameras=("image", "second_image", "wrist_image"),
+    datasets=(
+        "lerobot/vlabench_unified",
+        "VLABench/vlabench_primitive_ft_lerobot_video",
+        "VLABench/vlabench_composite_ft_lerobot_video",
+    ),
+    gripper_dims=(6,),
+)
+
+BENCHMARKS = {spec.name: spec for spec in (LIBERO, ROBOTWIN, VLABENCH)}
 
 
 class BenchmarkMismatch(ValueError):
@@ -108,4 +125,4 @@ def validate_rl_setup(
         raise BenchmarkMismatch(f"RL setup is not valid for {spec.name}:\n  - " + "\n  - ".join(problems))
 
 
-__all__ = ["BENCHMARKS", "LIBERO", "ROBOTWIN", "BenchmarkMismatch", "BenchmarkSpec", "get_benchmark", "validate_rl_setup"]
+__all__ = ["BENCHMARKS", "LIBERO", "ROBOTWIN", "VLABENCH", "BenchmarkMismatch", "BenchmarkSpec", "get_benchmark", "validate_rl_setup"]

@@ -97,18 +97,17 @@ def _load(name):
 def _smolvla_libero_features():
     from huggingface_hub import try_to_load_from_cache
 
-    cfg = yaml.safe_load((ROOT / "configs" / "reinflow_grpo.yaml").read_text())
-    path = try_to_load_from_cache(cfg["checkpoint"], "config.json", revision=cfg["checkpoint_revision"])
+    path = try_to_load_from_cache("lerobot/smolvla_libero", "config.json", revision="a24f1f380461b665158d52acd140152c79e8b36d")
     if not isinstance(path, str):
         pytest.skip("smolvla_libero config not cached")
     return json.loads(Path(path).read_text())
 
 
-def test_reinflow_config_is_valid_for_its_checkpoint():
-    cfg = _load("reinflow_grpo.yaml")
+def test_libero_rl_config_is_valid_for_the_libero_reference_checkpoint():
+    cfg = yaml.safe_load((ROOT / "configs" / "benchmarks" / "libero" / "rl.yaml").read_text())
     assert cfg["benchmark"] == "libero"
     feats = _smolvla_libero_features()
-    lc = cfg["libero"]
+    lc = cfg["env"]
     validate_rl_setup(
         get_benchmark(cfg["benchmark"]),
         policy_state_dim=feats["input_features"]["observation.state"]["shape"][0],
@@ -122,19 +121,37 @@ def test_reinflow_config_is_valid_for_its_checkpoint():
     assert lc["n_exec_steps"] == feats["n_action_steps"], "RL should execute chunks like the SFT eval"
 
 
-def test_rl_configs_never_point_at_robotwin_checkpoints():
-    for name in ("reinflow_grpo.yaml", "rl.yaml"):
-        cfg = _load(name)
-        ckpt = str(cfg.get("checkpoint") or "")
-        assert "checkpoints/" not in ckpt, f"{name} still points at a RoboTwin checkpoint"
-        stats = str((cfg.get("stats") or {}).get("path") or "")
-        assert "robotwin" not in stats.lower(), f"{name} still uses RoboTwin stats"
-        cams = list(cfg["libero"]["camera_map"].values())
-        assert len(cams) == len(set(cams)), f"{name} duplicates a camera"
+def test_every_benchmark_rl_config_matches_its_contract():
+    """Each benchmark's RL config stays in that benchmark's space (A10)."""
+    for bench in ("libero", "robotwin", "vlabench"):
+        cfg = yaml.safe_load((ROOT / "configs" / "benchmarks" / bench / "rl.yaml").read_text())
+        spec = get_benchmark(cfg["benchmark"])
+        assert spec.name == bench
+        env = cfg["env"]
+        assert f"outputs/{bench}/" in cfg["checkpoint"] and f"outputs/{bench}/" in cfg["run"]["out_dir"]
+        validate_rl_setup(
+            spec,
+            policy_state_dim=spec.state_dim,
+            policy_action_dim=spec.action_dim,
+            policy_cameras=list(env["camera_map"]),
+            camera_map=env["camera_map"],
+            action_slice=env["action_slice"],
+            env_gripper_dims=env["env_gripper_dims"],
+        )
+        # absolute-action benchmarks must not be clipped to [-1, 1]
+        assert (env["action_clip"] is None) == (bench != "libero")
 
 
-def test_reinflow_build_policy_refuses_robotwin_benchmark():
+def test_legacy_rl_config_never_points_at_robotwin_checkpoints():
+    cfg = _load("rl.yaml")
+    assert "checkpoints/" not in str(cfg.get("checkpoint") or "")
+    assert "robotwin" not in str((cfg.get("stats") or {}).get("path") or "").lower()
+    cams = list(cfg["libero"]["camera_map"].values())
+    assert len(cams) == len(set(cams))
+
+
+def test_socket_backend_is_libero_only():
     import scripts.train_reinflow_grpo as trg
 
-    with pytest.raises(BenchmarkMismatch, match="LIBERO simulator only"):
-        trg.build_policy({"benchmark": "robotwin", "checkpoint": "unused"}, "cpu")
+    with pytest.raises(BenchmarkMismatch, match="socket backend"):
+        trg.build_policy({"benchmark": "robotwin", "checkpoint": "unused", "env": {"backend": "socket"}}, "cpu")

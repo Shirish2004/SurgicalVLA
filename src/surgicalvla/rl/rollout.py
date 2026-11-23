@@ -106,6 +106,7 @@ def env_action(
     scale: float = 1.0,
     gripper_sign: float = -1.0,
     gripper_dims: tuple[int, ...] = (6,),
+    clip: float | None = 1.0,
 ) -> np.ndarray:
     """One post-processed 14-D action -> the 7-D ``OSC_POSE`` action LIBERO takes.
 
@@ -121,7 +122,9 @@ def env_action(
     for dim in gripper_dims:
         if 0 <= dim < out.shape[0]:
             out[dim] *= float(gripper_sign)
-    return np.clip(out, -1.0, 1.0)
+    # LIBERO takes normalised deltas in [-1, 1]; RoboTwin / VLABench take absolute
+    # joint angles / poses, which must not be clipped (clip=None).
+    return out if clip is None else np.clip(out, -float(clip), float(clip))
 
 
 @dataclass
@@ -134,6 +137,15 @@ class ChunkRecord:
     advantage: float = 0.0
     latents: torch.Tensor | None = None
     log_probs: torch.Tensor | None = None
+    n_exec: int = 0  # chunk steps actually sent to the simulator (A9)
+    cot: tuple | None = None  # CoT that conditioned this chunk, replayed in the update (A8)
+
+    def exec_pad(self) -> torch.Tensor:
+        """``(1, T)`` mask of chunk steps that were *not* executed."""
+        T = int(self.chunk.shape[0])
+        pad = torch.ones(1, T, dtype=torch.bool)
+        pad[:, : max(0, min(self.n_exec, T))] = False
+        return pad
 
     def to(self, device) -> ChunkRecord:
         self.batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in self.batch.items()}
@@ -191,6 +203,7 @@ def rollout_episode(
     collect: bool = True,
     sde_steps: int = 0,
     lift_state: bool = False,
+    action_clip: float | None = 1.0,
 ) -> EpisodeResult:
     """Roll the policy out in the simulator and return the recorded decision points.
 
@@ -221,10 +234,10 @@ def rollout_episode(
             noise = torch.randn(
                 1, cfg.chunk_size, cfg.max_action_dim, device=device, generator=generator, dtype=torch.float32
             )
-            latents = log_probs = None
+            latents = log_probs = cot = None
             if sde_steps > 0 and hasattr(policy, "sample_actions_sde"):
-                chunk, latents, log_probs = policy.sample_actions_sde(
-                    batch, num_steps=sde_steps, generator=generator
+                chunk, latents, log_probs, cot = policy.sample_actions_sde(
+                    batch, num_steps=sde_steps, generator=generator, return_cot=True
                 )
             else:
                 chunk = policy.predict_action_chunk(batch, noise=noise)  # (1, T, action_dim) normalized
@@ -244,6 +257,7 @@ def rollout_episode(
                     scale=action_scale,
                     gripper_sign=gripper_sign,
                     gripper_dims=env_gripper_dims,
+                    clip=action_clip,
                 )
                 result = client.step(act)
                 sent.append(act)
@@ -265,6 +279,8 @@ def rollout_episode(
                         actions=actions,
                         latents=None if latents is None else latents.detach().to("cpu"),
                         log_probs=None if log_probs is None else log_probs.detach().to("cpu"),
+                        n_exec=len(sent),
+                        cot=None if cot is None else tuple(None if t is None else t.detach().to("cpu") for t in cot),
                     )
                 )
             decisions += 1

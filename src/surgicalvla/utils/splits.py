@@ -5,8 +5,16 @@ import random
 from torch.utils.data import Subset
 
 
-def split_episodes(total: int, val_fraction: float, seed: int = 0):
-    ids = list(range(total))
+def block_episodes(total: int, block: int, take: int) -> list[int]:
+    """First ``take`` episodes of every ``block``-sized block (RoboTwin: 50 demo_clean of 550)."""
+    if not 0 < take <= block:
+        raise ValueError(f"need 0 < take <= block, got take={take} block={block}")
+    return [b * block + j for b in range(total // block) for j in range(take)]
+
+
+def split_episodes(total: int, val_fraction: float, seed: int = 0, pool: list[int] | None = None):
+    """Random train/val split of ``pool`` (default: every episode)."""
+    ids = list(range(total)) if pool is None else list(pool)
     random.Random(seed).shuffle(ids)
     n = max(1, int(round(total * val_fraction)))
     return sorted(ids[n:]), sorted(ids[:n])

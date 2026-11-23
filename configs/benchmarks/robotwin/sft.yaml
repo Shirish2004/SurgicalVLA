@@ -1,0 +1,93 @@
+# SFT stage for RoboTwin 2.0 (SurgicalVLA = smolvla_moe). One model per benchmark: outputs/robotwin/sft.
+#   python3 scripts/benchmark.py train sft --benchmark robotwin
+# Branches without a training signal yet (CoT, phase, pose, object tokens) are
+# EXPERIMENTAL: see docs/limitations.md before claiming them.
+project:
+  wandb_project: "surgical-vla"      # W&B entity/project grouping for runs
+  wandb_mode: "online"                # "online" | "offline" | "disabled"; "disabled" skips W&B entirely
+  entity: "building-text"            # optional W&B entity; null -> default account
+  run_name: "surgical_vla_robotwin"           # base name; stage suffix is appended
+  notes: "MoE surgical VLA (SmolVLA backbone)"
+  tags: []
+  log_every: 20                     # log scalar metrics every N steps
+  val_every: 200                     # run validation preview every N steps
+  save_every: 2000                   # save model checkpoint every N steps
+
+run:
+  steps: 50000                       # total training steps
+  batch_size: 24
+  device: "cuda"                     # "cuda" or "cpu"
+  ckpt_dir: "outputs/robotwin/sft"
+  streaming: false                   # true -> pull frames from the Hub on demand
+  streaming_buffer_size: 1000        # shuffle-buffer size, in frames, when streaming
+  streaming_seed: 42                 # seed for the streaming shuffle buffer
+  grad_accum: 4                      # accumulate gradients over N steps before optimizer step
+  
+
+# RoboTwin 2.0 (aloha, 14-D joint state/action, 3 cameras, 30 fps). Protocol data:
+# 50 demo_clean episodes per task = episodes 550*k + j (j < 50) of the local copy.
+dataset:
+  root: "/media/protomate/Seagate/shirish/robotwin_data/"
+  episode_blocks: {block: 550, take: 50}   # demo_clean only (RoboTwin leaderboard protocol)
+  camera_map:                         # dataset key -> policy key
+    observation.images.cam_high: observation.images.camera1
+    observation.images.cam_left_wrist: observation.images.camera2
+    observation.images.cam_right_wrist: observation.images.camera3
+
+# Model / architecture (fields passed straight to SurgicalVLAConfig)
+# NOTE: action dim is derived from the dataset's action feature (max_action_dim),
+# not from a config field -- so there is deliberately no num_actions/hidden_size/
+# max_action_seq key here. Camera keys/counts are also derived from the dataset
+# (see dataset.camera_map above), not listed here.
+model:
+  policy_type: "smolvla_moe"            # "surgical" (skill-routed) | "smolvla_moe" (object-6D + CoT + phase MoE)
+  vlm_model_name: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+  chunk_size: 50
+  n_action_steps: 25
+  n_obs_steps: 1                 
+  freeze_vision_encoder: true
+  attention_mode: "cross_attn"
+  num_vlm_layers: 16
+  expert_width_multiplier: 0.75
+  load_vlm_weights: true
+  adapt_to_pi_aloha: false            # when in pretraining stage with aloha setup
+  add_image_special_tokens: true
+  train_expert_only: true
+  num_experts: 5
+  gripper_dims: [6, 13]
+  scheduler_decay_steps : 50000
+# MoE action expert (keys here are SurgicalVLAConfig field names).
+moe:
+  moe_every_n_layers: 2
+  moe_expert_ratio: 0.25
+  moe_max_k: 2
+  moe_top_p: 0.7
+  moe_prior_bias: 1.0
+  moe_load_balance_coef: 0.01
+  skill_loss_coef: 0.1
+  moe_z_coef: 1.0e-3
+  skill_freeze_steps: 20000
+
+# Only read when model.policy_type == "smolvla_moe" (SmolVLAMoEConfig fields).
+smolvla_moe:
+  num_object_tokens: 4
+  num_objects: 2                  # 1 for single-arm, 2 for bimanual handover
+  obj_tracker_mode: "passthrough" # passthrough | cached | mock | live
+  use_cot: true
+  cot_max_tokens: 48
+  cot_refresh_interval: 10
+  num_experts: 4
+  num_shared_experts: 1
+  moe_top_k: 2
+  moe_aux_loss_weight: 0.01
+  phase_loss_weight: 0.1
+  pose_aux_loss_weight: 0.2
+  expert_cross_attn_vlm_layers: 0  # must equal num_vlm_layers (0 -> all); see docs/audit.md A1
+  use_reinflow: false
+
+# Visual panels / CSV / routing-drift plots
+logging:
+  enable_visual_logging: true
+  log_dir: "logs"
+  log_every_n_steps: 200             # write panels + CSV row every N steps
+  max_log_panels: 50                 # rolling cap per camera -- not yet enforced in logging.py

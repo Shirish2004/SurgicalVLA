@@ -1,36 +1,36 @@
-"""One launcher for training and evaluation across benchmarks.
+"""One launcher for training and evaluation on LIBERO, RoboTwin 2.0 and VLABench.
 
-    # supervised fine-tuning
-    python3 scripts/benchmark.py train sft --benchmark libero   --policy smolvla
-    python3 scripts/benchmark.py train sft --benchmark robotwin --policy smolvla
-    python3 scripts/benchmark.py train sft --benchmark libero   --policy surgicalvla
-    python3 scripts/benchmark.py train sft --benchmark robotwin --policy surgicalvla
-    # online RL (ReinFlow-GRPO); LIBERO only for now
-    python3 scripts/benchmark.py train rl  --benchmark libero
-    # evaluation
-    python3 scripts/benchmark.py eval --benchmark libero      --checkpoint lerobot/smolvla_libero --revision a24f1f38...
-    python3 scripts/benchmark.py eval --benchmark libero_plus --checkpoint lerobot/smolvla_libero --revision a24f1f38...
-    python3 scripts/benchmark.py eval --benchmark robotwin    --checkpoint outputs/baselines/smolvla_robotwin_clean50/checkpoints/last/pretrained_model
+Every benchmark has its own model, configs and outputs:
 
-Add ``--dry-run`` to print the commands without running them. Everything after
-``--`` is passed through to the underlying trainer / ``lerobot-eval``.
+    configs/benchmarks/<benchmark>/sft.yaml   ->  outputs/<benchmark>/sft
+    configs/benchmarks/<benchmark>/rl.yaml    ->  outputs/<benchmark>/rl   (final/ = trained model)
 
-Each job runs in the pixi environment it belongs to (training: ``dev``,
-simulators: ``sim-eval``). LIBERO-Plus and RoboTwin run inside LeRobot's
-canonical Docker images behind ``lerobot-env-server`` (started and stopped here);
-LIBERO runs locally unless ``--server`` is given.
+    # supervised fine-tuning (SurgicalVLA, or the unmodified SmolVLA baseline)
+    python3 scripts/benchmark.py train sft --benchmark {libero,robotwin,vlabench} [--policy smolvla]
+    # online RL (ReinFlow-GRPO; training.mode sequential | joint | interleaved in rl.yaml)
+    python3 scripts/benchmark.py train rl  --benchmark {libero,robotwin,vlabench}
+    # evaluation of any checkpoint (Hub id or local dir; local dirs resolve to their newest policy)
+    python3 scripts/benchmark.py eval --benchmark {libero,libero_plus,robotwin,vlabench} --checkpoint ...
+    # everything: SFT then RL on every benchmark, then evaluate every model (SFT and RL) on its benchmark
+    python3 scripts/benchmark.py pipeline [--benchmarks libero robotwin vlabench] [--libero-plus]
+
+``--dry-run`` prints the commands; arguments after ``--`` go to the trainer / lerobot-eval.
+
+Simulators: LIBERO runs locally (``sim-eval`` env); RoboTwin and VLABench (and
+LIBERO-Plus) run in LeRobot's canonical Docker images behind ``lerobot-env-server``,
+started and stopped here, for both RL rollouts and evaluation.
 
 Evaluation protocols (docs/baselines.md):
-* libero       4 suites x 10 tasks x 50 init states x seeds (default 3)
-* libero_plus  every registered variant of the 4 perturbed suites, 1 episode each (upstream protocol)
-* robotwin     100 episodes per task, demo_clean (Easy). LeRobot's RoboTwin integration hard-codes
-               task_config/demo_clean.yml, so the Hard (demo_randomized) setting needs an
-               integration change and is not offered here yet.
+* libero       4 suites x 10 tasks x 50 init states x 3 seeds
+* libero_plus  every registered variant of the 4 perturbed suites, 1 episode each
+* robotwin     50 tasks x 100 episodes, Easy (LeRobot's integration hard-codes demo_clean)
+* vlabench     21 primitive + 22 composite tasks x 10 episodes x 3 seeds (VLABench paper protocol)
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shlex
 import subprocess
@@ -40,17 +40,37 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LEROBOT = ROOT / "lerobot"
 ENDPOINT = "tcp/127.0.0.1:7448"
+SEEDS = [1000, 2000, 3000]
+SMOLVLA_BASE = ("lerobot/smolvla_base", "5e8d12a6e2975b0e5e5fce7c8caf47c371d257b6")
 
 LIBERO_SUITES = ["libero_spatial", "libero_object", "libero_goal", "libero_10"]
-LIBERO_RENAME = {"observation.images.image": "observation.images.camera1", "observation.images.image2": "observation.images.camera2"}
-ROBOTWIN_RENAME = {
-    "observation.images.head_camera": "observation.images.camera1",
-    "observation.images.left_camera": "observation.images.camera2",
-    "observation.images.right_camera": "observation.images.camera3",
-}
 ROBOTWIN_TASKS = sorted(p.stem for p in (ROOT.parent / "RoboTwin" / "description" / "task_instruction").glob("*.json"))
-SMOLVLA_BASE = ("lerobot/smolvla_base", "5e8d12a6e2975b0e5e5fce7c8caf47c371d257b6")
-SEEDS = [1000, 2000, 3000]
+VLABENCH_PRIMITIVE = (
+    "select_fruit select_toy select_chemistry_tube add_condiment select_book select_painting select_drink "
+    "insert_flower select_billiards select_ingredient select_mahjong select_poker density_qa friction_qa "
+    "magnetism_qa reflection_qa simple_cuestick_usage simple_seesaw_usage sound_speed_qa thermal_expansion_qa weight_qa"
+).split()
+VLABENCH_COMPOSITE = (
+    "cluster_billiards cluster_book cluster_drink cluster_toy cook_dishes cool_drink find_unseen_object get_coffee "
+    "hammer_nail heat_food make_juice play_mahjong play_math_game play_poker play_snooker rearrange_book "
+    "rearrange_chemistry_tube set_dining_table set_study_table store_food take_chemistry_experiment use_seesaw_complex"
+).split()
+
+RENAME = {  # simulator camera -> policy camera (all SurgicalVLA and SmolVLA checkpoints use camera1..3)
+    "libero": {"observation.images.image": "observation.images.camera1", "observation.images.image2": "observation.images.camera2"},
+    "robotwin": {
+        "observation.images.head_camera": "observation.images.camera1",
+        "observation.images.left_camera": "observation.images.camera2",
+        "observation.images.right_camera": "observation.images.camera3",
+    },
+    "vlabench": {
+        "observation.images.image": "observation.images.camera1",
+        "observation.images.second_image": "observation.images.camera2",
+        "observation.images.wrist_image": "observation.images.camera3",
+    },
+}
+RENAME["libero_plus"] = RENAME["libero"]
+DATASET = {"libero": "lerobot/libero", "robotwin": "lerobot/robotwin_unified", "vlabench": "lerobot/vlabench_unified"}
 
 
 def pixi(env: str, *cmd: str) -> list[str]:
@@ -66,122 +86,151 @@ def execute(cmds: list[list[str]], dry_run: bool) -> None:
                 sys.exit(code)
 
 
-# ----------------------------------------------------------------------------- train
-def train_cmds(args, extra: list[str]) -> list[list[str]]:
-    out = args.out
-    if args.stage == "rl":
-        if args.benchmark != "libero":
-            sys.exit("RL is implemented for LIBERO only; RoboTwin RL needs a RoboTwin env client and stays 14-D.")
-        return [pixi("dev", "python", "scripts/train_reinflow_grpo.py", "--config", args.config or "configs/reinflow_grpo.yaml", *extra)]
+def resolve_policy(ref: str) -> str:
+    """Local training output -> its newest saved policy dir (Hub ids pass through)."""
+    path = ROOT / ref if not Path(ref).is_absolute() else Path(ref)
+    if not path.exists():
+        return ref
+    from surgicalvla.utils.checkpoints import latest_pretrained
 
-    if args.policy == "smolvla":  # unmodified SmolVLA baseline through lerobot-train
-        if args.benchmark == "robotwin":
-            env = ["env", f"OUT={out or 'outputs/baselines/smolvla_robotwin_clean50'}"]
-            return [[*env, *pixi("dev", "bash", "scripts/train_robotwin_baseline.sh", *extra)]]
-        # exact recipe of lerobot/smolvla_libero (its train_config.json): full fine-tune
-        return [
-            pixi(
-                "dev",
-                "lerobot-train",
-                f"--policy.path={SMOLVLA_BASE[0]}",
-                f"--policy.pretrained_revision={SMOLVLA_BASE[1]}",
-                "--policy.push_to_hub=false",
-                "--policy.device=cuda",
-                "--policy.freeze_vision_encoder=false",
-                "--policy.train_expert_only=false",
-                "--policy.scheduler_decay_steps=25000",
-                "--dataset.repo_id=lerobot/libero",
-                f"--rename_map={json.dumps(LIBERO_RENAME)}",
-                "--batch_size=32",
-                "--steps=25000",
-                "--save_freq=5000",
-                "--seed=1000",
-                "--num_workers=4",
-                f"--output_dir={out or 'outputs/baselines/smolvla_libero_repro'}",
-                "--job_name=smolvla_libero_repro",
-                "--trackio.enable=true",
-                "--trackio.project=surgical-vla",
-                *extra,
-            )
-        ]
-
-    # SurgicalVLA through the repo's trainer
-    if args.benchmark == "libero":
-        cmd = ["python", "scripts/train.py", "--config", args.config or "configs/train_libero.yaml", "--repo_id", "lerobot/libero"]
-    else:
-        cmd = ["python", "scripts/train.py", "--config", args.config or "configs/train.yaml", "--repo_id", "lerobot/robotwin_unified"]
-    if out:
-        cmd.append(f"run.ckpt_dir={out}")
-    return [pixi("dev", *cmd, *extra)]
+    try:
+        return str(latest_pretrained(path))
+    except FileNotFoundError:
+        print(f"# note: no saved policy under {ref} yet", file=sys.stderr)
+        return ref
 
 
-# ----------------------------------------------------------------------------- eval
+# ----------------------------------------------------------------------------- servers
 def server_config(benchmark: str, task: str, out_dir: Path) -> Path:
-    """LeRobot's canonical server config for ``benchmark`` with ``task`` and every registered variant."""
+    """LeRobot's canonical server config for ``benchmark`` serving ``task`` (all variants)."""
     import yaml
 
     cfg = yaml.safe_load((LEROBOT / "docker" / "sim" / "configs" / f"{benchmark}.yaml").read_text())
     cfg["sim"]["task"] = task
-    cfg["sim"]["kwargs"].get("gym_kwargs", {}).pop("task_ids", None)  # all registered tasks / variants
+    cfg["sim"]["kwargs"].get("gym_kwargs", {}).pop("task_ids", None)
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"server_{benchmark}_{task.replace(',', '_')[:60]}.yaml"
+    digest = hashlib.sha1(task.encode()).hexdigest()[:10]
+    path = out_dir / f"server_{benchmark}_{digest}.yaml"
     path.write_text(yaml.safe_dump(cfg, sort_keys=False))
     return path
 
 
-def server(path: Path, stop: bool = False) -> list[str]:
-    return pixi("sim-eval", "lerobot-env-server", f"--config_path={path}", "--docker=true", *(["--stop=true"] if stop else []))
+def served(benchmark: str, task: str, out_dir: Path, inner: list[list[str]]) -> list[list[str]]:
+    cfg = server_config(benchmark, task, out_dir)
+    start = pixi("sim-eval", "lerobot-env-server", f"--config_path={cfg}", "--docker=true")
+    return [start, *inner, [*start, "--stop=true"]]
 
 
-def eval_cmds(args, extra: list[str]) -> list[list[str]]:
-    name = args.name or Path(args.checkpoint.rstrip("/")).name.replace("/", "_")
-    out = Path(args.out or f"results/{args.benchmark}/{name}")
-    seeds = [str(s) for s in (args.seeds or SEEDS)]
-    common = ["--policy", args.checkpoint, "--revision", args.revision or "", "--out", str(out), "--seeds", *seeds]
-    cmds: list[list[str]] = []
+# ----------------------------------------------------------------------------- train
+def train_cmds(args, extra: list[str]) -> list[list[str]]:
+    b = args.benchmark
+    if args.stage == "rl":
+        cfg_path = args.config or f"configs/benchmarks/{b}/rl.yaml"
+        rl = [pixi("sim-eval", "python", "scripts/train_reinflow_grpo.py", "--config", cfg_path, *extra)]
+        if b == "libero":
+            return rl
+        import yaml
 
-    if args.benchmark in ("libero", "libero_plus"):
-        suites = args.suites or LIBERO_SUITES
-        plus = args.benchmark == "libero_plus"
-        use_server = plus or args.server
-        for suite in suites:
-            run = ["python", "scripts/eval_libero_baseline.py", "run", *common, "--suites", suite, "--env-type", args.benchmark]
-            if plus:  # upstream protocol: one episode per registered variant
-                run += ["--n-episodes", "1", "--batch-size", "1"]
-            if use_server:
-                cfg = server_config(args.benchmark, suite, out)
-                run += ["--server-endpoint", ENDPOINT]
-                cmds += [server(cfg), pixi("sim-eval", *run, *extra), server(cfg, stop=True)]
-            else:
-                cmds.append(pixi("sim-eval", *run, *extra))
-        cmds.append(pixi("sim-eval", "python", "scripts/eval_libero_baseline.py", "aggregate", "--root", str(out)))
-        return cmds
+        suite = yaml.safe_load((ROOT / cfg_path).read_text())["env"]["suite"]
+        return served(b, suite, ROOT / f"outputs/{b}/servers", rl)
 
-    # RoboTwin: 100 episodes per task through the canonical RoboTwin image
-    tasks = args.tasks or ROBOTWIN_TASKS
-    cfg = server_config("robotwin", ",".join(tasks), out)
-    cmds.append(server(cfg))
-    for seed in seeds:
-        cmds.append(
+    if args.policy == "smolvla":  # unmodified SmolVLA baselines through lerobot-train
+        out = args.out or f"outputs/baselines/smolvla_{b}"
+        if b == "robotwin":
+            return [["env", f"OUT={out}", *pixi("dev", "bash", "scripts/train_robotwin_baseline.sh", *extra)]]
+        recipe = {  # the recipes of the released lerobot/smolvla_<benchmark> checkpoints
+            "libero": ["--policy.freeze_vision_encoder=false", "--policy.train_expert_only=false",
+                       "--policy.scheduler_decay_steps=25000", "--batch_size=32", "--steps=25000"],
+            "vlabench": ["--batch_size=32", "--steps=20000"],
+        }[b]
+        return [
             pixi(
-                "sim-eval",
-                "lerobot-eval",
-                f"--policy.path={args.checkpoint}",
-                *([f"--policy.pretrained_revision={args.revision}"] if args.revision else []),
-                "--policy.device=cuda",
-                "--env.type=robotwin",
-                f"--env.task={','.join(tasks)}",
-                "--eval.n_episodes=100",
-                "--eval.batch_size=1",
-                f"--seed={seed}",
-                f"--rename_map={json.dumps(ROBOTWIN_RENAME)}",
-                f"--env.server.endpoint={ENDPOINT}",
-                f"--output_dir={out / 'easy' / f'seed{seed}'}",
+                "dev", "lerobot-train",
+                f"--policy.path={SMOLVLA_BASE[0]}", f"--policy.pretrained_revision={SMOLVLA_BASE[1]}",
+                "--policy.push_to_hub=false", "--policy.device=cuda",
+                f"--dataset.repo_id={DATASET[b]}", f"--rename_map={json.dumps(RENAME[b])}",
+                *recipe, "--save_freq=5000", "--seed=1000", "--num_workers=4",
+                f"--output_dir={out}", f"--job_name=smolvla_{b}",
+                "--trackio.enable=true", "--trackio.project=surgical-vla",
                 *extra,
             )
-        )
-    cmds.append(server(cfg, stop=True))
+        ]
+
+    cmd = ["python", "scripts/train.py", "--config", args.config or f"configs/benchmarks/{b}/sft.yaml", "--repo_id", DATASET[b]]
+    if b == "robotwin":  # local copy of robotwin_unified (root set in the config)
+        cmd += ["--root", "/media/protomate/Seagate/shirish/robotwin_data"]
+    if args.out:
+        cmd.append(f"run.ckpt_dir={args.out}")
+    return [pixi("dev", *cmd, *extra)]
+
+
+# ----------------------------------------------------------------------------- eval
+def eval_cmds(args, extra: list[str]) -> list[list[str]]:
+    b = args.benchmark
+    checkpoint = resolve_policy(args.checkpoint)
+    name = args.name or Path(args.checkpoint.rstrip("/")).name.replace("/", "_")
+    out = Path(args.out or f"results/{b}/{name}")
+    seeds = [str(s) for s in (args.seeds or SEEDS)]
+    revision = ["--revision", args.revision] if args.revision else ["--revision", ""]
+
+    if b in ("libero", "libero_plus"):
+        cmds: list[list[str]] = []
+        for suite in args.suites or LIBERO_SUITES:
+            run = ["python", "scripts/eval_libero_baseline.py", "run", "--policy", checkpoint, *revision,
+                   "--out", str(out), "--seeds", *(seeds[:1] if b == "libero_plus" else seeds),
+                   "--suites", suite, "--env-type", b]
+            if b == "libero_plus":  # upstream protocol: one episode per registered variant
+                run += ["--n-episodes", "1", "--batch-size", "1"]
+            if b == "libero_plus" or args.server:
+                run += ["--server-endpoint", ENDPOINT]
+                cmds += served(b, suite, out, [pixi("sim-eval", *run, *extra)])
+            else:
+                cmds.append(pixi("sim-eval", *run, *extra))
+        return cmds + [pixi("sim-eval", "python", "scripts/eval_libero_baseline.py", "aggregate", "--root", str(out))]
+
+    if b == "robotwin":
+        suites = {"easy": args.tasks or ROBOTWIN_TASKS}
+        n_episodes = 100
+    else:  # vlabench
+        suites = {"primitive": args.tasks or VLABENCH_PRIMITIVE} if args.tasks else {"primitive": VLABENCH_PRIMITIVE, "composite": VLABENCH_COMPOSITE}
+        n_episodes = 10
+    cmds = []
+    for suite, tasks in suites.items():
+        inner = [
+            pixi(
+                "sim-eval", "python", "scripts/lerobot_eval.py",
+                f"--policy.path={checkpoint}",
+                *([f"--policy.pretrained_revision={args.revision}"] if args.revision else []),
+                "--policy.device=cuda", f"--env.type={b}", f"--env.task={','.join(tasks)}",
+                f"--eval.n_episodes={n_episodes}", "--eval.batch_size=1", "--eval.use_async_envs=false",
+                f"--seed={seed}", f"--rename_map={json.dumps(RENAME[b])}", f"--env.server.endpoint={ENDPOINT}",
+                f"--output_dir={out / suite / f'seed{seed}'}",
+                *extra,
+            )
+            for seed in (seeds[:1] if b == "robotwin" else seeds)
+        ]
+        cmds += served(b, ",".join(tasks), out, inner)
     return cmds
+
+
+# ----------------------------------------------------------------------------- pipeline
+def pipeline(args, extra: list[str]) -> None:
+    """SFT -> RL per benchmark, then evaluate every benchmark's SFT and RL model on its benchmark."""
+    ns = argparse.Namespace
+    for b in args.benchmarks:
+        if not args.skip_sft:
+            execute(train_cmds(ns(stage="sft", benchmark=b, policy="surgicalvla", config=None, out=None), extra), args.dry_run)
+        if not args.skip_rl:
+            execute(train_cmds(ns(stage="rl", benchmark=b, policy="surgicalvla", config=None, out=None), extra), args.dry_run)
+    for b in args.benchmarks:
+        for stage in ("sft", "rl"):
+            targets = [b, "libero_plus"] if b == "libero" and args.libero_plus else [b]
+            for target in targets:
+                ev = ns(benchmark=target, checkpoint=f"outputs/{b}/{stage}", revision=None, name=f"surgicalvla_{stage}",
+                        out=None, seeds=None, suites=None, tasks=None, server=False)
+                if args.dry_run and not (ROOT / f"outputs/{b}/{stage}").exists():
+                    print(f"# (eval of outputs/{b}/{stage} once it exists)")
+                execute(eval_cmds(ev, []), args.dry_run)
 
 
 def main() -> None:
@@ -195,27 +244,36 @@ def main() -> None:
 
     t = sub.add_parser("train")
     t.add_argument("stage", choices=["sft", "rl"])
-    t.add_argument("--benchmark", required=True, choices=["libero", "robotwin"])
+    t.add_argument("--benchmark", required=True, choices=["libero", "robotwin", "vlabench"])
     t.add_argument("--policy", default="surgicalvla", choices=["smolvla", "surgicalvla"])
-    t.add_argument("--config", help="override the default config for this benchmark/stage")
-    t.add_argument("--out", help="output / checkpoint directory")
+    t.add_argument("--config")
+    t.add_argument("--out")
     t.add_argument("--dry-run", action="store_true")
 
     e = sub.add_parser("eval")
-    e.add_argument("--benchmark", required=True, choices=["libero", "libero_plus", "robotwin"])
-    e.add_argument("--checkpoint", required=True, help="Hub repo id or local pretrained_model dir")
-    e.add_argument("--revision", help="Hub revision to pin (recommended for Hub checkpoints)")
-    e.add_argument("--name", help="results sub-directory name")
-    e.add_argument("--out", help="results directory (default results/<benchmark>/<name>)")
+    e.add_argument("--benchmark", required=True, choices=["libero", "libero_plus", "robotwin", "vlabench"])
+    e.add_argument("--checkpoint", required=True)
+    e.add_argument("--revision")
+    e.add_argument("--name")
+    e.add_argument("--out")
     e.add_argument("--seeds", nargs="+", type=int)
-    e.add_argument("--suites", nargs="+", help="LIBERO / LIBERO-Plus suites (default: all four)")
-    e.add_argument("--tasks", nargs="+", help="RoboTwin tasks (default: all 50)")
+    e.add_argument("--suites", nargs="+")
+    e.add_argument("--tasks", nargs="+")
     e.add_argument("--server", action="store_true", help="LIBERO: use LeRobot's canonical Docker image")
     e.add_argument("--dry-run", action="store_true")
 
+    p = sub.add_parser("pipeline")
+    p.add_argument("--benchmarks", nargs="+", default=["libero", "robotwin", "vlabench"], choices=["libero", "robotwin", "vlabench"])
+    p.add_argument("--libero-plus", action="store_true", help="also evaluate the LIBERO models on LIBERO-Plus")
+    p.add_argument("--skip-sft", action="store_true")
+    p.add_argument("--skip-rl", action="store_true")
+    p.add_argument("--dry-run", action="store_true")
+
     args = ap.parse_args(argv)
-    cmds = train_cmds(args, extra) if args.cmd == "train" else eval_cmds(args, extra)
-    execute(cmds, args.dry_run)
+    if args.cmd == "pipeline":
+        pipeline(args, extra)
+    else:
+        execute(train_cmds(args, extra) if args.cmd == "train" else eval_cmds(args, extra), args.dry_run)
 
 
 if __name__ == "__main__":

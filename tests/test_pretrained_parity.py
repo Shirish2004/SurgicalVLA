@@ -82,4 +82,4 @@ def test_upcycled_policy_matches_smolvla_base_at_init():
 
     assert ran == set(range(len(pol.model.vlm_with_expert.lm_expert.layers))), "expert layers skipped"
     rel = ((out - ref).norm() / ref.norm()).item()
-    assert rel < 1e-2, f"up-cycled policy diverges from smolvla_base at init: rel={rel:.3e}"
+    assert rel < 2e-3, f"up-cycled policy diverges from smolvla_base at init: rel={rel:.3e}"

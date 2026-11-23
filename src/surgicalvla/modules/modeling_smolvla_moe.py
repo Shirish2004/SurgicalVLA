@@ -226,20 +226,23 @@ class SmolVLAMoEModel(nn.Module):
         embs, pad, att = [], [], []
         for img, img_mask in zip(images, img_masks, strict=False):
             if self.add_image_special_tokens:
+                # Upstream SmolVLA does not sqrt(d)-scale the image special tokens.
                 start = self.global_image_start_token.to(device=img.device)[None].expand(img.shape[0], -1)
-                start_emb = self._embed_text(start)
+                start_emb = self.vlm_with_expert.embed_language_tokens(start)
                 embs.append(start_emb)
                 pad.append(torch.ones(start_emb.shape[:2], dtype=torch.bool, device=start_emb.device))
                 att += [0] * start_emb.shape[1]
             img_emb = self.vlm_with_expert.embed_image(img)
-            img_emb = img_emb * math.sqrt(img_emb.shape[-1])
+            # Same op order/dtype as upstream: sqrt(d) is cast to the embedding dtype first
+            # (bf16 rounds sqrt(960)=30.98 to 31.0), which the pretrained weights expect.
+            img_emb = img_emb * torch.tensor(img_emb.shape[-1] ** 0.5, dtype=img_emb.dtype, device=img_emb.device)
             bsize, n_img = img_emb.shape[:2]
             embs.append(img_emb)
             pad.append(img_mask[:, None].expand(bsize, n_img))
             att += [0] * n_img
             if self.add_image_special_tokens:
                 end = self.image_end_token.to(device=img.device)[None].expand(img.shape[0], -1)
-                end_emb = self._embed_text(end)
+                end_emb = self.vlm_with_expert.embed_language_tokens(end)
                 embs.append(end_emb)
                 pad.append(torch.ones(end_emb.shape[:2], dtype=torch.bool, device=end_emb.device))
                 att += [0] * end_emb.shape[1]
@@ -248,6 +251,11 @@ class SmolVLAMoEModel(nn.Module):
         pad.append(lang_masks)
         att += [0] * lang_tokens.shape[1]
 
+        # Drop the object slots when no sample in the batch has a valid object: fully
+        # masked tokens are mathematically inert but change the sequence length, which
+        # changes bf16 kernel accumulation and broke exact parity with smolvla_base (A2).
+        if object_tokens is not None and object_token_mask is not None and not bool(object_token_mask.any()):
+            object_tokens = None
         if object_tokens is not None:
             embs.append(object_tokens)
             if object_token_mask is None:

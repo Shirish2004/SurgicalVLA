@@ -483,6 +483,9 @@ class SmolVLAMoEModel(nn.Module):
         refresh_cot: bool = False,
         use_cache: bool | None = None,
     ) -> PrefixState:
+        if self._cot_cache is not None and self._cot_cache[0].shape[0] != state.shape[0]:
+            self._cot_cache = None  # cached for another batch: never reuse it
+            refresh_cot = True
         if self.config.use_cot and cot_ids is None and refresh_cot and self.cot_inference_enabled:
             generated = self.generate_cot(images, img_masks, lang_tokens, lang_masks, state, objects)
             if generated is not None:

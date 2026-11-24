@@ -761,3 +761,22 @@ def test_cot_not_generated_until_cot_supervised():
     with torch.no_grad():
         model.sample_actions(*args, objects=objects, refresh_cot=True)
     assert model._cot_cache is not None
+
+
+def test_cot_cache_is_not_reused_for_another_batch():
+    """A cached trace from a batch of 2 must not be spliced into a batch of 1."""
+    cfg = make_config(cot_max_tokens=3)
+    model = make_model(cfg)
+    batch = make_batch(cfg)
+    model.train()
+    model(**to_model_inputs(model, batch))  # CoT-supervised step enables inference
+    model.eval()
+    objects = model.object_features(batch["state"], batch["obj_sam_feat"], batch["obj_pose_vec"], batch["obj_valid_mask"])
+    args = (batch["images"], batch["img_masks"], batch["lang_tokens"], batch["lang_masks"], batch["state"])
+    with torch.no_grad():
+        model.sample_actions(*args, objects=objects, refresh_cot=True)
+        assert model._cot_cache[0].shape[0] == 2
+        one = [a[:1] if torch.is_tensor(a) else [x[:1] for x in a] for a in args]
+        obj1 = model.object_features(batch["state"][:1], batch["obj_sam_feat"][:1], batch["obj_pose_vec"][:1], batch["obj_valid_mask"][:1])
+        model.sample_actions(*one, objects=obj1, refresh_cot=False)  # no refresh requested
+    assert model._cot_cache[0].shape[0] == 1

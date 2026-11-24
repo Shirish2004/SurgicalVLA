@@ -104,3 +104,4 @@ def test_object_input_config_fixes_the_token_shapes():
     assert SmolVLAMoEConfig(object_input="grid").num_objects == 4
     with pytest.raises(ValueError):
         SmolVLAMoEConfig(object_input="bad")
+

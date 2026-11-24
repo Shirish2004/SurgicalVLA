@@ -70,7 +70,10 @@ python3 scripts/benchmark.py train sft --benchmark robotwin --policy smolvla
 ```
 
 Per-benchmark configs live in `configs/benchmarks/<benchmark>/{sft,rl}.yaml` and write to
-`outputs/<benchmark>/{sft,rl}`. See [`docs/training.md`](docs/training.md).
+`outputs/<benchmark>/{sft,rl}`. See [`docs/training.md`](docs/training.md),
+[`docs/evaluation.md`](docs/evaluation.md) and [`docs/configs.md`](docs/configs.md). Trained models
+are pushed (private) to `Shirish24/surgical-vla-<model-name>` and collected in the Hub collection
+`surgical-vla`.
 
 ## Results
 
@@ -90,7 +93,9 @@ CIs). Nothing is reported before the ablation pilots finish.
 - [`docs/audit.md`](docs/audit.md): Phase-0 audit, bugs found and fixed (each with a regression test)
 - [`docs/baselines.md`](docs/baselines.md): evaluation protocols, versions, commands, reproduction status
 - [`docs/architecture.md`](docs/architecture.md): components, switches, MoE variants with measured cost
-- [`docs/training.md`](docs/training.md): per-benchmark pipeline, auxiliary supervision, pilot, RL stage, joint SFT + RL
+- [`docs/training.md`](docs/training.md): SFT, RL and SFT + RL step by step, per benchmark; when to start RL and the RL experiments; logging, resume, Hub upload
+- [`docs/evaluation.md`](docs/evaluation.md): evaluating SFT, RL and SFT + RL models on every benchmark; protocol, statistics, checklist
+- [`docs/configs.md`](docs/configs.md): every config key, what it is for and when to change it
 - [`docs/pseudolabels.md`](docs/pseudolabels.md) / [`docs/pseudolabel_quality.md`](docs/pseudolabel_quality.md): label-free targets, cost, validation against simulator ground truth
 - [`docs/related_work.md`](docs/related_work.md): related work and component licenses (all components release-safe)
 - [`docs/limitations.md`](docs/limitations.md): experimental components and open issues

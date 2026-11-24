@@ -1,111 +1,432 @@
 # Training guide
 
-## One model per benchmark
+How to train SurgicalVLA with supervised fine-tuning (SFT), online RL, and SFT and RL together,
+on LIBERO, RoboTwin 2.0 and VLABench. Every key named here is explained in
+[`docs/configs.md`](configs.md); evaluation is in [`docs/evaluation.md`](evaluation.md).
 
-Each benchmark gets its own SurgicalVLA model, trained in two stages, with its own configs
-and outputs:
+- [0. Before the first run](#0-before-the-first-run)
+- [1. The three training regimes](#1-the-three-training-regimes)
+- [2. SFT](#2-sft)
+- [3. RL (ReinFlow-GRPO)](#3-rl-reinflow-grpo)
+- [4. SFT + RL together](#4-sft--rl-together)
+- [5. Per benchmark](#5-per-benchmark)
+- [6. Logging: where the graphs are](#6-logging-where-the-graphs-are)
+- [7. Resuming](#7-resuming)
+- [8. Hugging Face Hub](#8-hugging-face-hub)
+- [9. Auxiliary supervision and the ablation pilot](#9-auxiliary-supervision-and-the-ablation-pilot)
+- [10. Integrity rules](#10-integrity-rules)
+- [11. Troubleshooting](#11-troubleshooting)
 
-| Benchmark | SFT config → output | RL config → output | Data / simulator |
+## 0. Before the first run
+
+| Check | Command | Why |
+|---|---|---|
+| environments installed | `pixi install -e dev && pixi install -e sim-eval` | `dev` trains; `sim-eval` runs the LIBERO simulator (RL, local eval) |
+| Hub login | `pixi run -e dev hf auth whoami` → `Shirish24` | datasets, base weights, model upload |
+| W&B login | `pixi run -e dev wandb login` | curves and images (`project.wandb_mode: online`) |
+| Docker | `docker info` | RoboTwin / VLABench simulators and the canonical LIBERO evaluation image |
+| GPU free | `nvidia-smi` | SFT on LIBERO uses ~10.4 GiB at batch 24; labelling needs 5–8 GiB more |
+| data local (optional) | `hf download lerobot/libero --repo-type dataset` | with `run.streaming: false` the dataset is read from the local cache (`~/.cache/huggingface/lerobot/hub/datasets--lerobot--libero`), downloaded once on first use |
+
+Every command goes through one launcher, `scripts/benchmark.py`. `--dry-run` prints the
+underlying commands without running them. Arguments after `--` are passed to the trainer as
+`section.key=value` overrides (`-- run.steps=20000 run.seed=1`).
+
+## 1. The three training regimes
+
+| Regime | What it is | Start from | Command | Output |
+|---|---|---|---|---|
+| **SFT** | flow-matching imitation on the benchmark's demonstrations (+ auxiliary losses when switched on) | `lerobot/smolvla_base` | `train sft --benchmark <b>` | `outputs/<b>/sft/checkpoints/step_N` |
+| **RL** (`training.mode: sequential`) | ReinFlow-GRPO in the simulator, KL-anchored to the SFT model | the SFT model | `train rl --benchmark <b>` | `outputs/<b>/rl/final` |
+| **SFT + RL** (`training.mode: joint` or `interleaved`) | RL updates plus a flow-matching loss on streamed demonstrations in the same run | the SFT model | `train rl --benchmark <b> -- training.mode=joint` | `outputs/<b>/rl/final` |
+
+"SFT + RL" here always means *RL with demonstrations kept in the loss*, after an SFT stage.
+Plain "SFT then RL" is the `sequential` mode. RL-only from `smolvla_base` (no SFT) is possible
+(`-- checkpoint=lerobot/smolvla_base`) but is only an ablation arm: with no task-specific
+policy, GRPO groups are nearly all failures and carry no signal.
+
+```
+smolvla_base ──SFT──► SFT model ──eval──► SFT number (required before any RL)
+                          │
+                          ├──RL, sequential────────────────► RL model ──eval──► RL number + forgetting
+                          └──RL, joint / interleaved (+ FM)─► SFT+RL model ──eval──► same
+```
+
+One model per benchmark: each benchmark has its own configs, outputs, normaliser and Hub
+repositories. A LIBERO model is never evaluated on RoboTwin, and so on.
+
+## 2. SFT
+
+### Command
+
+```bash
+python scripts/benchmark.py train sft --benchmark libero                      # SurgicalVLA
+python scripts/benchmark.py train sft --benchmark libero --out results/libero_train
+python scripts/benchmark.py train sft --benchmark libero --policy smolvla     # unmodified SmolVLA baseline
+python scripts/benchmark.py train sft --benchmark libero --resume             # continue (section 7)
+```
+
+### What happens
+
+1. `scripts/train.py` reads `configs/benchmarks/<b>/sft.yaml` and applies the overrides.
+2. **Model:** `smolvla_moe` initialised from `lerobot/smolvla_base` (VLM, connector, state and
+   action projections). The expert FFNs are up-cycled into the MoE (`smolvla_moe.moe_variant`).
+   With every switch off, the model matches `smolvla_base` at step 0 (tested).
+3. **Data:** `--repo_id` (`lerobot/libero`, `lerobot/robotwin_unified`,
+   `lerobot/vlabench_unified`). With `run.streaming: false`, the whole dataset is read from the
+   local Hugging Face cache. With `true`, frames come from the Hub on demand, which uses less
+   disk but has no validation split.
+4. **Split:** `dataset.val_fraction` of the episodes (default 1 %, by episode, seed
+   `dataset.split_seed`) are held out for validation and saved to `<out>/split.json`.
+   `dataset.episodes` restricts training to a list, e.g. one suite.
+5. **Each step:**
+   - `run.grad_accum` micro-batches of `run.batch_size` frames;
+   - bf16 autocast, gradient clipping, AdamW with cosine decay (SmolVLA preset);
+   - an EMA copy of the weights (`run.ema_decay`).
+6. **Logs, validation and checkpoints:**
+   - scalars every `project.log_every` steps;
+   - validation action error every `project.val_every` steps (raw and EMA weights);
+   - images every `logging.log_every_n_steps` (400);
+   - a checkpoint every `project.save_every` steps, with weights, config, normaliser,
+     optimizer and RNG state.
+7. **Upload:** the final checkpoint is pushed to the Hub (section 8).
+
+SFT never runs the simulator, so there is no success rate during SFT. Success is measured by
+evaluation (`docs/evaluation.md`).
+
+### Settings that matter
+
+| Key | Default | Set it to | Notes |
 |---|---|---|---|
-| LIBERO | `configs/benchmarks/libero/sft.yaml` → `outputs/libero/sft` | `configs/benchmarks/libero/rl.yaml` → `outputs/libero/rl` | `lerobot/libero`; local sim (`pixi -e sim-eval`) |
-| RoboTwin 2.0 | `configs/benchmarks/robotwin/sft.yaml` → `outputs/robotwin/sft` | `configs/benchmarks/robotwin/rl.yaml` → `outputs/robotwin/rl` | 50 demo_clean / task; Docker sim |
-| VLABench | `configs/benchmarks/vlabench/sft.yaml` → `outputs/vlabench/sft` | `configs/benchmarks/vlabench/rl.yaml` → `outputs/vlabench/rl` | `lerobot/vlabench_unified`; Docker sim |
+| `run.steps` | 50,000 | 20k–50k | LIBERO: 2.7 s/step at batch 24 × accum 4 on an RTX A4500, so 50k ≈ 37 h |
+| `run.batch_size` × `run.grad_accum` | 24 × 4 = 96 | keep the product ≥ 64 | the released SmolVLA recipes use 32–64 |
+| `smolvla_moe.moe_variant` | `upcycled` | `matched` for the compute-fair comparison | `docs/architecture.md` |
+| `smolvla_moe.use_cot` | true | false unless `aux.cot_traces: true` | without traces there is no CoT loss, so the flag does nothing |
+| `model.freeze_vision_encoder`, `model.train_expert_only` | true, true | keep | the published LIBERO checkpoint unfroze both (full fine-tune); we keep the frozen VLM until the VLM-change study |
+| `model.n_action_steps` | 50 | keep 50 | inference only; the protocol horizon for every method |
+| `dataset.episodes` | all | `configs/data/libero_<suite>_episodes.json` | one-suite runs (pilot) |
+| `dataset.val_fraction` | 0.01 | 0.01–0.1 | offline action-error monitoring only |
 
-All SFT configs train `smolvla_moe` initialised from `smolvla_base`, and use the
-`camera1..3` naming, so one rename map per benchmark serves training, RL and evaluation.
-The RL stage starts from the newest policy under the SFT output and writes `final/` when it
-completes. Checkpoints carry their normaliser (`policy_preprocessor.json`), which the RL
-stage and `lerobot-eval` read.
+Recommended first runs:
 
-```bash
-python3 scripts/benchmark.py train sft --benchmark libero        # or robotwin / vlabench
-python3 scripts/benchmark.py train rl  --benchmark libero
-python3 scripts/benchmark.py pipeline                             # SFT -> RL on all three, then evaluate all
-python3 scripts/benchmark.py pipeline --libero-plus --dry-run     # print every command
-```
-
-Baselines (unmodified SmolVLA, LeRobot's trainer and the released recipes):
-`train sft --benchmark <b> --policy smolvla`.
-
-Architecture switches (`moe_variant`, `aux_vision`, `latent_cot`, `cot_curriculum_steps`) and
-the `aux:` sidecar section live in the SFT configs, all off by default (`docs/architecture.md`).
-`run.seed` seeds torch / numpy / random; `dataset.episodes` restricts SFT to an episode list
-(`scripts/libero_suite_episodes.py --suite libero_spatial` writes one).
-
-## Label-free auxiliary supervision
-
-```bash
-pixi run -e dev labels --suite libero_spatial --limit 3      # pseudo-labels, videos, bootstrap traces
-pixi run -e sim-eval python scripts/validate_pseudolabels.py --hdf5 <LIBERO demo file>   # quality vs sim GT
-# then train with e.g.  smolvla_moe.aux_vision=true aux.sidecar_root=pseudolabels
-```
-
-Reasoning traces follow R&B-EnCoRe's bootstrap: round 1 trains on unfiltered traces
-(`make_cot_traces.py --bootstrap`); round 2 re-scores them with the trace-trained policy and keeps
-only those that lower its flow-matching loss on the demonstrated actions.
-
-## Step-4 pilot
-
-```bash
-pixi run -e dev pilot --suite libero_spatial --steps 20000 --dry-run
-```
-
-Arms `baseline`, `vision_aux`, `cot_latent`, `cot_explicit`, `both` (and the MoE variants) are
-trained with identical steps, batch and data (the suite's 432 demonstrations) for seeds 0, 1, 2,
-then evaluated on that suite with the protocol settings. Gate order: oracle upper bound, this
-pilot, transfer to another dataset; stop at the first gate that fails.
-
-## RL stage (ReinFlow-GRPO)
-
-`scripts/train_reinflow_grpo.py`. Per iteration: one task and one start state, `G` SDE
-rollouts from it (GRPO groups share the start state), group z-scored rewards, then one
-clipped-surrogate step with per-denoising-step importance ratios, a k3 KL to the frozen
-SFT reference and an entropy bonus on the learned noise scale. Log-probs cover only the
-chunk steps that were executed, and the CoT active at rollout time is replayed.
-
-Rollouts use `src/surgicalvla/rl/lerobot_sim.py`, which builds the environment exactly as
-`lerobot-eval` does, so RL sees the evaluation observations. LIBERO RL runs with
-`init_states: false`: layouts are sampled from each task's placement regions by seed, so RL never
-touches the 50 fixed init states per task that LIBERO evaluates on. Validation (every
-`env.val_suites` suite × `rl.val_tasks_per_suite` × `rl.val_episodes_per_task`, fixed seeds) only
-monitors training; the evaluated model is always `final/` after the fixed iteration budget. RoboTwin and VLABench run in
-LeRobot's Docker images; the launcher starts and stops the server. Every config is checked
-against its benchmark contract (`src/surgicalvla/rl/benchmarks.py`): state/action
-dimensions, action semantics, cameras and normalisation must all match.
-
-## Joint SFT + RL (`training.mode`)
-
-| Mode | Update |
+| Purpose | Command |
 |---|---|
-| `sequential` (default) | RL only, from the SFT checkpoint |
-| `joint` | `L = L_GRPO + β·KL(π‖π_ref) + λ_t · L_FM(demo batch)` every update |
-| `interleaved` | `sft_steps` pure flow-matching updates every `interleave_every` RL updates |
+| main LIBERO model (all 4 suites) | `train sft --benchmark libero` |
+| fast check that everything runs | `train sft --benchmark libero -- run.steps=50 project.val_every=25 hub.push=false` |
+| one suite | `train sft --benchmark libero -- dataset.episodes=configs/data/libero_libero_spatial_episodes.json` |
+| compute-matched MoE | `... -- smolvla_moe.moe_variant=matched` |
 
-The demo batch is streamed from the Hub (`StreamingLeRobotDataset`, `demo:` section; RoboTwin
-uses the clean-50 episodes) and its position is saved in `rl_state.pt`, so a resumed run
-continues the stream where it stopped. `λ_t` follows `training.lambda`
-(`constant | linear | cosine | exp`, from `start` to `end` over `steps`).
+### Which data a LIBERO run sees
 
-Logged per update (`joint/*`): `rl_loss`, `fm_loss`, `grad_norm_rl`, `grad_norm_fm`,
-`grad_norm_fm_weighted`, `grad_cosine_rl_fm`, `lambda`. The two gradients are computed
-separately and then summed, which leaves the update identical to a single joint backward
-(tested); a negative cosine means the demo term is pulling against the policy gradient.
+`lerobot/libero` contains 1,693 demonstrations of the 40 tasks of the four evaluation suites
+(Spatial, Object, Goal, Long/libero_10; LIBERO-90 is not included). A default run trains on
+99 % of them across all four suites. LIBERO measures success from 50 fixed starting layouts per
+task that never appear in the demonstrations, so every demonstration may be used for training.
+A held-out demonstration split measures offline action error, not success.
 
-Resume (`run.resume: true`) restores the policy weights saved with the last checkpoint,
-the optimizer, torch and numpy RNG, the demo-stream position and the iteration. The state
-file is written atomically.
+**Data-efficiency studies** (train on part of each task's demonstrations): there is no
+per-task split option yet. Until there is, pass the training list explicitly with
+`dataset.episodes` and set `dataset.val_fraction` to the held-out share; the held-out episodes
+are drawn from that list. Success is still measured on the standard 50 layouts.
 
-### Planned pilot (not run yet)
+## 3. RL (ReinFlow-GRPO)
 
-One LIBERO suite, three arms at matched compute (same number of environment steps and
-gradient updates), 3 seeds each: RL-only from `smolvla_base`, SFT then RL (`sequential`),
-and `joint`. Report success vs environment steps (sample efficiency), final success with
-CIs, and forgetting (success on the SFT tasks before vs after RL). It runs only after the
-LIBERO protocol gap (`docs/baselines.md` §3) is closed; nothing is scaled up without a
-signal in the pilot.
+### When to start RL
 
-## Logging
+Start RL only when all of these hold:
 
-SurgicalVLA training (`scripts/train.py`, RL script) logs to W&B (`project.wandb_*`) and
-local files; the LeRobot-trained SmolVLA baselines log with Trackio to the local database
-(`trackio show --project surgical-vla`), nothing is uploaded.
+1. **SFT is finished and evaluated.** The final SFT checkpoint has its protocol number
+   (`docs/evaluation.md`). That number is the reference for the RL gain and for forgetting.
+2. **The SFT policy sometimes succeeds and sometimes fails on the RL tasks.** GRPO learns from
+   differences inside a group of rollouts from the same start. A task the policy always fails
+   (or always solves) gives zero advantage and no gradient (`rl/advantage_std` = 0,
+   `rl/samples` = 0). Aim for tasks with roughly 10–90 % SFT success. Read this from RL
+   validation at the start of the run (`rl/val_success/<suite>`, fresh layouts), **not** from the
+   evaluation episodes.
+3. **The simulator matches the evaluation.** Rollouts are built exactly as `lerobot-eval` builds
+   them (`src/surgicalvla/rl/lerobot_sim.py`), and the config passes the benchmark contract check
+   (state/action dims, cameras, normaliser, gripper dims). The script refuses to start otherwise.
+
+### Command
+
+```bash
+python scripts/benchmark.py train rl --benchmark libero                                  # from outputs/libero/sft
+python scripts/benchmark.py train rl --benchmark libero -- checkpoint=results/libero_train
+python scripts/benchmark.py train rl --benchmark libero -- run.iters=2 run.val_every=1 hub.push=false   # smoke
+python scripts/benchmark.py train rl --benchmark libero --resume
+```
+
+LIBERO rollouts run in the local `sim-eval` environment. For RoboTwin and VLABench the launcher
+starts LeRobot's Docker simulator server, runs RL against it, and stops it.
+
+### One iteration
+
+1. Pick a task and one start layout.
+   - LIBERO uses `env_kwargs.init_states: false`: layouts are sampled from each task's placement
+     regions by seed, never the 50 evaluation layouts.
+2. Roll out `rl.group_size` (8) episodes from that start.
+   - Actions come from the SDE sampler: `rl.sde_steps` denoising steps with a learned noise
+     scale (ReinFlow noise head).
+   - Each episode executes `env.n_exec_steps` actions per chunk, for up to `env.max_steps` steps.
+3. **Reward:** `rl.success_reward` for success. The optional pose terms (`position_weight`,
+   `orientation_weight`) apply only when the simulator reports a 6-D object pose.
+4. **Advantage:** z-score of the rewards within the group.
+5. **Update:** one clipped-surrogate step (`rl.clip`) with per-denoising-step importance
+   ratios, plus:
+   - a k3 KL to the frozen SFT reference (`rl.kl_coef`);
+   - an entropy bonus on the noise scale (`rl.entropy_coef`).
+
+   Log-probs count only the executed chunk steps, and the CoT that was active during the
+   rollout is replayed.
+6. **Validation and saving:**
+   - every `run.val_every` iterations, validate on `env.val_suites` ×
+     `rl.val_tasks_per_suite` × `rl.val_episodes_per_task`, from fixed seeds that are not
+     evaluation layouts;
+   - every `run.save_every` iterations, save a checkpoint and `rl_state.pt`;
+   - when the run completes, save and push `final/`.
+
+The evaluated model is **always `final/`** after the fixed iteration budget. Validation only
+monitors; it never selects a checkpoint.
+
+### RL settings
+
+| Key | Default | Range to try | Effect |
+|---|---|---|---|
+| `env.suite` | `libero_10` | any one LIBERO suite; RoboTwin/VLABench: task list | which tasks RL trains on (LIBERO: one suite per run) |
+| `env.val_suites` | all 4 LIBERO suites | keep all 4 | forgetting shows up on the suites RL does not train on |
+| `rl.group_size` | 8 | 4–16 | larger = better advantage estimate, more simulator time per update |
+| `rl.kl_coef` | 0.01 | 0–0.05 | anchor to the SFT model; 0 = free drift |
+| `rl.clip` | 0.2 | 0.1–0.3 | PPO-style ratio clip |
+| `rl.sde_steps` | 5 | 5–10 | denoising steps during rollouts (evaluation always uses the deterministic ODE) |
+| `rl.entropy_coef` | 0.001 | 0–0.01 | keeps the noise scale from collapsing |
+| `run.lr` | 1e-6 | 5e-7–3e-6 | RL is far more sensitive than SFT |
+| `run.iters` | 200 | fixed in advance | the budget; never stop early on validation |
+| `smolvla_moe.reinflow_min_std` / `reinflow_max_std` | 0.01 / 0.15 | — | bounds of the learned noise (model config) |
+
+### Metrics to watch
+
+| Metric | Healthy | Problem |
+|---|---|---|
+| `rl/train_success_rate` | rises slowly | stuck at 0 or 1: no signal, choose other tasks |
+| `rl/advantage_std` | ≈ 1 | 0 most iterations: groups all fail or all succeed |
+| `rl/approx_kl` (to the SFT reference) | small, slowly rising | jumps: lower `run.lr` or raise `rl.kl_coef` |
+| `rl/ratio_mean`, `rl/ratio_max` | near 1, max < ~2 | large: the update moved too far; lower `run.lr` |
+| `rl/val_success/<suite>` | trained suite up, others flat | others falling: forgetting, try `joint` |
+| `rl/grad_norm` | stable | spikes |
+| `rl/val_rollout` images | sensible motions | jitter or freezing |
+
+### RL experiments
+
+**None of these has been run yet.** The RL code is covered by unit tests (ratios, KL, masks,
+resume) and the contract checks. Each experiment is run at matched compute (the same number of
+environment steps and gradient updates), with 3 seeds, and evaluated on the protocol.
+
+| # | Question | Arms | Report |
+|---|---|---|---|
+| R1 | Does RL help after SFT? | SFT only vs `sequential` | success with CIs, per suite |
+| R2 | Is joint SFT+RL better than SFT then RL? | `sequential`, `joint`, `interleaved` (+ RL-only from base as a floor) | success, sample efficiency (val success vs env steps), forgetting |
+| R3 | How much demonstration weight? (joint) | λ constant 1.0; cosine 1 → 0.1; 0 | as R2 |
+| R4 | KL anchor | `kl_coef` 0, 0.01, 0.05 | success, forgetting, KL curve |
+| R5 | Group size | G = 4, 8, 16 at equal env steps | success vs env steps |
+| R6 | Transfer of the gain | the R2 winner on RoboTwin and VLABench | per-benchmark success |
+
+Order: R1 → R2 on one LIBERO suite (`libero_10`, the lowest SFT success). Go to R3–R5 only if
+R1/R2 show a gain; go to R6 last. Nothing is scaled up without a signal in the pilot.
+
+**Forgetting** is measured as the protocol success on the suites *not* trained by RL, before vs
+after RL, together with `rl/val_success/<suite>` during training.
+
+## 4. SFT + RL together
+
+`training.mode` in `configs/benchmarks/<b>/rl.yaml`:
+
+| Mode | Update every iteration | When to use |
+|---|---|---|
+| `sequential` | `L_GRPO + β·KL(π‖π_ref)` | default; the reference arm |
+| `joint` | `L_GRPO + β·KL + λ_t · L_FM(demo batch)` | RL drifts away from the demonstrations (forgetting, odd motions) |
+| `interleaved` | RL update, then `training.sft_steps` pure flow-matching updates every `training.interleave_every` iterations | the same, when the two gradients conflict (negative `joint/grad_cosine_rl_fm`) |
+
+```bash
+python scripts/benchmark.py train rl --benchmark libero -- training.mode=joint \
+    training.lambda.start=1.0 training.lambda.end=0.1 training.lambda.kind=cosine training.lambda.steps=200
+```
+
+- **Demonstration batches** are streamed from the Hub (`demo:` section, the same dataset and
+  camera rename as SFT; RoboTwin uses only the clean-50 episodes). Their stream position is
+  saved in `rl_state.pt`, so a resumed run continues the stream.
+- **λ_t** follows `training.lambda`: `constant | linear | cosine | exp`, from `start` to `end`
+  over `steps` iterations.
+- **Logged** per update: `joint/rl_loss`, `joint/fm_loss`, `joint/grad_norm_rl`,
+  `joint/grad_norm_fm`, `joint/grad_norm_fm_weighted`, `joint/grad_cosine_rl_fm`,
+  `joint/lambda`.
+  - The two gradients are computed separately and then summed, which gives the same update as
+    one joint backward (tested).
+  - A persistently negative cosine means the demonstration term is working against the policy
+    gradient.
+
+A sensible default: `joint` with λ cosine from 1.0 to 0.1 over the whole run, `kl_coef` 0.01,
+`group_size` 8, `lr` 1e-6. These values are a starting point; the R2/R3 pilot decides.
+
+## 5. Per benchmark
+
+| | LIBERO | RoboTwin 2.0 | VLABench |
+|---|---|---|---|
+| Dataset | `lerobot/libero` (1,693 episodes, 273k frames, 40 tasks, 10 fps) | local copy of `robotwin_unified` (`dataset.root`), 50 clean episodes per task (`episode_blocks: {block: 550, take: 50}`) | `lerobot/vlabench_unified` (10,977 episodes, 3.1 M frames, 295 tasks, 10 fps) |
+| Robot | Franka Panda, single arm | ALOHA, bimanual | Franka |
+| State / action | 8-D state, 7-D end-effector delta | 14-D joints / 14-D absolute joints | 7-D absolute end-effector pose |
+| Cameras → policy | `image`→camera1, `image2`→camera2 | `cam_high`, `cam_left_wrist`, `cam_right_wrist` → camera1–3 | `image`, `second_image`, `wrist_image` → camera1–3 |
+| `model.gripper_dims` | `[6]` | `[6, 13]` | `[6]` |
+| SFT config | `configs/benchmarks/libero/sft.yaml` | `.../robotwin/sft.yaml` | `.../vlabench/sft.yaml` |
+| RL config | `.../libero/rl.yaml` (local simulator, `init_states: false`) | `.../robotwin/rl.yaml` (Docker, all 50 tasks) | `.../vlabench/rl.yaml` (Docker, 21 primitive tasks) |
+| RL horizon | `max_steps` 520 | 1,200 (`action_clip: null`, absolute joints) | as configured |
+| SmolVLA reference | `lerobot/smolvla_libero` | `lerobot/smolvla_robotwin` (trained on all episodes; not the protocol) | `lerobot/smolvla_vlabench` |
+| Baseline recipe (`--policy smolvla`) | full fine-tune, 25k steps, batch 32 | `scripts/train_robotwin_baseline.sh`, 20k steps, batch 64, expert only | 20k steps, batch 32 |
+| Pseudo-labels | LIBERO-Spatial being labelled (`pseudolabels/`) | none yet | none yet |
+| Known limits | protocol baseline ~66 % on Spatial (`docs/baselines.md` §3) | Hard setting unavailable; one multi-task policy instead of 50 | — |
+
+Data paths: LIBERO and VLABench are read from the Hugging Face cache. RoboTwin reads
+`/media/protomate/Seagate/shirish/robotwin_data/` (set in its config and in the launcher).
+
+## 6. Logging: where the graphs are
+
+| Where | What | How to open |
+|---|---|---|
+| W&B, project `surgical-vla` (`project.entity`) | every scalar; camera frames, action-chunk plots, MoE routing heatmap and pseudo-label overlays every 400 steps; RL validation rollouts | https://wandb.ai → project `surgical-vla`; the run id is printed at start and saved in each checkpoint (`wandb_run_id.txt`) |
+| TensorBoard | the same scalars and images | `pixi run -e dev tensorboard --logdir <out>/logs` |
+| `<out>/metrics.csv` | every scalar, long format `step,key,value` | pandas / any spreadsheet |
+| `<out>/figures/` | PNG copies of every logged image | file browser |
+| Trackio (baselines only) | `lerobot-train` runs | `trackio show --project surgical-vla` |
+
+SFT scalars:
+- `loss`, `fm_loss`, `moe_aux_loss`;
+- when their switch is on: `phase_loss`, `cot_loss`, `aux_feat_loss`, `aux_motion_loss`,
+  `aux_track_loss`, `aux_rel_loss`, `latent_cot_loss`;
+- `grad_norm`, `lr`, `gpu_mem_gb`;
+- validation (`val/*` raw weights, `val_ema/*` EMA weights): action MAE per horizon bucket
+  (`mae_h0_10`, `mae_h10_25`, `mae_h25_50`), arm and gripper MAE, jitter.
+
+A loss that is missing from the logs means its component is switched off.
+
+**Pseudo-label overlay** (`pseudolabels` image; needs `aux.sidecar_root` and labelled episodes
+in the batch):
+- green fill and box: the SAM 3 target mask;
+- red box: the SAM 3 end-effector;
+- magenta line: gripper to target;
+- yellow dots: TAPNext++ points, with cyan segments for their motion over the next
+  `aux.track_horizon` labelled frames;
+- text: noun phrase and SAM 3 scores, Depth Anything relative depths, episode, frame, phase,
+  and the CoT trace.
+
+The overlays are drawn from the stored labels. They are never a training target unless the
+matching switch is on.
+
+## 7. Resuming
+
+```bash
+python scripts/benchmark.py train sft --benchmark libero --out results/libero_train --resume
+python scripts/benchmark.py train rl  --benchmark libero --resume
+```
+
+**SFT** continues from the newest `checkpoints/step_N`. It restores:
+- weights, optimizer, LR schedule and EMA;
+- RNG state;
+- the data position. The shuffle order is a function of (seed, position), so no data is
+  re-read.
+
+On resume, `metrics.csv` and TensorBoard drop the values logged after step N, which leaves one
+clean curve. The W&B run is resumed from the id saved in the checkpoint; W&B keeps its own
+values for the steps after N.
+
+For checkpoints written before the id was saved, add `-- project.wandb_id=<id>` (the id is in
+`wandb/run-*-<id>`). A resume must use the same config and overrides as the original run.
+
+**RL** resumes from `rl_state.pt`: policy, optimizer, RNG, demo-stream position and iteration.
+
+## 8. Hugging Face Hub
+
+Every trained model gets its own repository, **`Shirish24/surgical-vla-<model-name>`**, and all
+of them are gathered in the Hub collection **`surgical-vla`**. Separate repositories are used
+because `lerobot-eval --policy.path` and `from_pretrained` load a model only from a repository
+root, not from a sub-folder.
+
+`<model-name>` comes from the run (`src/surgicalvla/utils/hub.py`):
+
+| Run | Repository |
+|---|---|
+| LIBERO SFT, defaults | `Shirish24/surgical-vla-libero-sft-upcycled-s0` |
+| SFT, matched MoE + aux heads + latent CoT, Spatial only, seed 1 | `Shirish24/surgical-vla-libero-sft-matched-aux-lcot-spatial-s1` |
+| LIBERO RL, joint, libero_10 | `Shirish24/surgical-vla-libero-rl-joint-libero10-s0` |
+| SmolVLA baseline | `Shirish24/surgical-vla-libero-smolvla-baseline-s1000` |
+
+`hub:` section of every config:
+- `push: true`: SFT pushes the final checkpoint and RL pushes `final/`. Set `false` for smoke
+  tests.
+- `namespace: "Shirish24"`.
+- `model_name: null`, or a template such as `"{benchmark}-sft-{variant}-mytest-s{seed}"`.
+  Use a distinct name for runs whose settings are otherwise identical; otherwise they share a
+  repository, and the later push becomes a new commit there.
+- `private: true` creates the repository private. Make it public on the Hub when you release.
+- `push_every_save: false`.
+
+What is uploaded:
+- weights, `config.json`, the normaliser (`policy_preprocessor*`, `policy_postprocessor*`);
+- `train_config.yaml` (the exact config with overrides);
+- a model card.
+
+Optimizer and resume state stay local.
+
+Manual or late upload, e.g. a run made before this existed:
+```bash
+pixi run -e dev python scripts/push_to_hub.py results/libero_train/checkpoints/step_50000 \
+    --config configs/benchmarks/libero/sft.yaml --stage sft --model-name libero-sft-upcycled-allsuites-s0
+```
+A failed upload never stops training: it prints a warning with this retry command.
+
+## 9. Auxiliary supervision and the ablation pilot
+
+```bash
+python scripts/benchmark.py labels --suite libero_spatial [--gpu-mem-gb 8]    # pseudo-labels + videos + bootstrap traces
+python scripts/benchmark.py pilot --suite libero_spatial --steps 20000 --dry-run
+```
+
+- **Labels:**
+  - every 4th frame, ~25–80 s per episode;
+  - frames are kept in host memory (`--offload-video`, peak 5.3 GiB), so labelling can share
+    the GPU with training under `--gpu-mem-gb`;
+  - sidecar files go in `pseudolabels/`, tracking videos in
+    `results/pseudolabels/videos/<suite>/`;
+  - details in `docs/pseudolabels.md`, quality in `docs/pseudolabel_quality.md`.
+- **Pilot arms:** `baseline`, `vision_aux`, `cot_latent`, `cot_explicit`, `both`, and the MoE
+  variants.
+  - Each arm is trained with identical steps, batch and data (the suite's 432 demonstrations),
+    for seeds 0, 1, 2.
+  - Each is then evaluated on that suite with the protocol settings.
+- **Gates**, in order, stopping at the first that fails:
+  1. oracle upper bound (simulator ground truth as targets);
+  2. this pilot;
+  3. transfer to another dataset.
+
+## 10. Integrity rules
+
+- **Evaluation layouts:** never train or tune on them. LIBERO RL uses fresh layouts
+  (`init_states: false`), and validation uses separate fixed seeds.
+- **Checkpoints:** fix the iteration and step budget before the run and evaluate the last
+  checkpoint. Never pick a checkpoint by evaluation success.
+- **Seeds:** 3 per arm, all reported, never selected.
+- **Pseudo-labels:** come only from frozen models. Simulator ground truth is used only to
+  validate them and for the oracle gate.
+- **Negative results:** reported (e.g. the explicit-CoT gain was negative before bootstrapping,
+  `docs/pseudolabels.md`).
+
+## 11. Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| `Instruction 'train' corresponds to no data` | partial dataset cache; download the full dataset or pass `--root` |
+| CUDA out of memory with labelling running | lower `labels --gpu-mem-gb`, or `run.batch_size` with a larger `run.grad_accum` |
+| resume starts at step 0 | `--resume` looks under `run.ckpt_dir`; pass the same `--out` as the original run |
+| a new W&B run on resume | old checkpoint without a run id: add `-- project.wandb_id=<id>` |
+| RL refuses to start (`BenchmarkMismatch`) | config and checkpoint disagree on dims, cameras or normaliser; use that benchmark's own SFT model |
+| RL `rl/samples` = 0 for many iterations | all-fail or all-success groups; choose tasks with mixed SFT success |
+| `push ... failed` warning | network or token; rerun `scripts/push_to_hub.py` later |
+| no `pseudolabels` image | `aux.sidecar_root` unset, or no labelled episode in the logged batch |

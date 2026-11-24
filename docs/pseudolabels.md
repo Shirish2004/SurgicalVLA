@@ -53,7 +53,12 @@ Extrapolated to full datasets at stride 2: LIBERO (1,693 episodes) ≈ 38 GPU-h;
 clean-50 (2,500) ≈ 55-60 GPU-h (longer episodes); VLABench (10,977) ≈ 250 GPU-h, which needs
 subsampling or the speed-ups below. Estimates rest on 3 episodes.
 
-Speed-ups not yet applied: stride 4 (about half the time), a single end-effector prompt,
+With `--offload-video` (used by `benchmark.py labels`) SAM 3 keeps the decoded frames in host
+memory: peak VRAM falls to 5.3 GiB on a LIBERO episode, and `--gpu-mem-gb` caps the process so
+labelling can share the GPU with training. LIBERO-Spatial (432 episodes) is labelled at stride 4
+(`benchmark.py labels` default).
+
+Speed-ups not yet applied: a single end-effector prompt,
 running SAM 3 on the object prompts at a lower internal resolution, and the `kernels`
 package (better SAM 3 post-processing; may change speed either way).
 

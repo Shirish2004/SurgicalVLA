@@ -121,6 +121,7 @@ class SmolVLAMoEModel(nn.Module):
             dropout=config.obj_dropout,
             jitter_translation=config.obj_jitter_translation,
             jitter_rotation=config.obj_jitter_rotation,
+            layout=config.obj_token_layout,
         )
         self.phase_proj = nn.Linear(self.vlm_hidden_size, self.expert_hidden_size)
         self.null_phase = nn.Parameter(torch.zeros(self.expert_hidden_size))
@@ -925,6 +926,17 @@ class SmolVLAMoEModel(nn.Module):
         }
 
 
+def ablate_object_inputs(batch: dict, mode: str) -> dict:
+    """Object-token usage probe: ``zero`` hides every object; ``shuffle`` permutes the object
+    slots of each sample (the slot embedding then marks the wrong object)."""
+    valid = batch["obj_valid_mask"]
+    if mode == "zero":
+        return {"obj_valid_mask": torch.zeros_like(valid)}
+    perm = torch.stack([torch.randperm(valid.shape[1], device=valid.device) for _ in range(valid.shape[0])])
+    take = lambda x: torch.gather(x, 1, perm.view(*perm.shape, *([1] * (x.dim() - 2))).expand_as(x))  # noqa: E731
+    return {"obj_sam_feat": take(batch["obj_sam_feat"]), "obj_pose_vec": take(batch["obj_pose_vec"]), "obj_valid_mask": take(valid)}
+
+
 class SmolVLAMoEPolicy(SmolVLAPolicy):
     config_class = SmolVLAMoEConfig
     name = "smolvla_moe"
@@ -943,7 +955,58 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
         super().reset()
         self.model.reset_cot()
 
+    def attach_live_perception(self, extractor, camera_key: str | None = None) -> None:
+        """Compute object inputs from the current frame at inference (evaluation, deployment).
+
+        ``extractor``: ``surgicalvla.perception.object_inputs.ObjectInputExtractor``. The frame is
+        ``batch[camera_key]`` (default: the first policy camera) and the phrase comes from
+        ``batch["task"]`` the way the cache made it (rule, or the grounded VLM when the rule
+        finds none). Not a submodule: it is frozen and not saved with the policy.
+        """
+        object.__setattr__(self, "_live_perception", extractor)
+        self._live_camera = camera_key or next(iter(self.config.image_features))
+        self._phrases: dict[str, str] = {}
+
+    def _phrase(self, task: str) -> str:
+        if task not in self._phrases:
+            from surgicalvla.pseudolabels.nounphrase import rule_phrase
+
+            phrase = rule_phrase(task)
+            if phrase is None:
+                from surgicalvla.pseudolabels.nounphrase import VLMPhraseExtractor
+
+                if getattr(self, "_phrase_vlm", None) is None:
+                    object.__setattr__(self, "_phrase_vlm", VLMPhraseExtractor(device=str(self.config.device or "cuda")))
+                phrase = self._phrase_vlm(task)
+            self._phrases[task] = phrase or ""
+        return self._phrases[task]
+
+    def _live_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        import numpy as np
+
+        images = batch[self._live_camera]
+        tasks = batch.get("task") or [""] * images.shape[0]
+        tasks = [tasks] * images.shape[0] if isinstance(tasks, str) else list(tasks)
+        key = "grid" if self.config.object_input == "grid" else "obj"
+        feats, poses, valid = [], [], []
+        for img, task in zip(images, tasks, strict=True):
+            frame = (img.float().clamp(0, 1).permute(1, 2, 0).cpu().numpy() * 255).round().astype(np.uint8)
+            out = self._live_perception(frame[None], self._phrase(str(task)))
+            feats.append(torch.from_numpy(out[f"{key}_feat"][0].astype(np.float32)))
+            poses.append(torch.from_numpy(out[f"{key}_pose"][0].astype(np.float32)))
+            valid.append(torch.from_numpy(out["obj_valid"][0]) if key == "obj" else torch.ones(4, dtype=torch.bool))
+        dev = images.device
+        return {"obj_sam_feat": torch.stack(feats).to(dev), "obj_pose_vec": torch.stack(poses).to(dev),
+                "obj_valid_mask": torch.stack(valid).to(dev)}
+
     def _objects(self, batch: dict[str, Tensor]) -> ObjectFeatures:
+        if self.config.object_input != "none" and "obj_sam_feat" not in batch:
+            if getattr(self, "_live_perception", None) is None:
+                raise RuntimeError("object_input is on but the batch has no object features and no live perception "
+                                   "is attached (attach_live_perception)")
+            batch = {**batch, **self._live_inputs(batch)}
+        if self.config.object_input != "none" and self.config.object_token_ablation != "none":
+            batch = {**batch, **ablate_object_inputs(batch, self.config.object_token_ablation)}
         tracked = self.object_tracker(batch)
         state = self.prepare_state(batch)
         return self.model.object_features(state, tracked.sam_roi_feat, tracked.obj_pose_vec, tracked.obj_valid_mask)
@@ -951,6 +1014,9 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
     def _should_refresh_cot(self) -> bool:
         if not self.config.use_cot:
             return False
+        steps = self.config.cot_curriculum_steps
+        if steps > 0 and int(self.model.train_steps) >= steps:
+            return False  # the curriculum ended latent-only: no explicit text at inference
         interval = max(1, self.config.cot_refresh_interval)
         refresh = self.model._cot_cache is None or self.model._cot_step % interval == 0
         self.model._cot_step += 1

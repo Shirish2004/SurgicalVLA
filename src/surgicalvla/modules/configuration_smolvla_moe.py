@@ -25,6 +25,19 @@ class SmolVLAMoEConfig(SmolVLAConfig):
     obj_jitter_translation: float = 0.01
     obj_jitter_rotation: float = 0.02
     obj_tracker_mode: str = "passthrough"  # passthrough | cached | mock | live
+    # Past-only object tokens from frozen perception (surgicalvla.perception.object_inputs):
+    #   none:    no object tokens
+    #   objects: the top `obj_candidates` instances of the target phrase + the end effector,
+    #            one token each (DINOv2 feature pooled in the SAM 3 mask; box, centroid, depth, score)
+    #   grid:    control with the same encoders and token count but no object structure (2x2 grid)
+    # Setting it fixes obj_sam_feat_dim (= aux_feat_dim), obj_pose_dim (8), num_objects and the
+    # per-object token layout. Training reads the features from the cache; evaluation computes
+    # them live from the current frame (attach_live_perception).
+    object_input: str = "none"
+    obj_candidates: int = 3
+    obj_token_layout: str = "pooled"  # pooled: num_object_tokens shared slots; per_object: one token per object
+    # evaluation-only probe of how much the policy uses the object tokens: zero | shuffle
+    object_token_ablation: str = "none"
 
     # --- asynchronous System-2 chain of thought --------------------------
     use_cot: bool = True
@@ -92,6 +105,16 @@ class SmolVLAMoEConfig(SmolVLAConfig):
 
     def __post_init__(self):
         super().__post_init__()
+        if self.object_input not in ("none", "objects", "grid"):
+            raise ValueError(f"unknown object_input {self.object_input!r}")
+        if self.object_token_ablation not in ("none", "zero", "shuffle"):
+            raise ValueError(f"unknown object_token_ablation {self.object_token_ablation!r}")
+        if self.object_input != "none":
+            self.obj_sam_feat_dim = self.aux_feat_dim
+            self.obj_pose_dim = 8
+            self.num_objects = self.obj_candidates + 1 if self.object_input == "objects" else 4
+            self.obj_token_layout = "per_object"
+            self.num_object_tokens = self.num_objects
         if self.moe_variant not in ("upcycled", "matched", "dense", "dense_param_matched"):
             raise ValueError(f"unknown moe_variant {self.moe_variant!r}")
         if self.num_experts < 1:

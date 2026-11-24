@@ -79,8 +79,16 @@ class ObjectCentric6DProjector(nn.Module):
         dropout: float = 0.15,
         jitter_translation: float = 0.01,
         jitter_rotation: float = 0.02,
+        layout: str = "pooled",
     ):
+        """``layout="pooled"``: all objects are averaged into ``num_tokens`` shared slots.
+        ``layout="per_object"``: one token per object (``num_tokens`` = number of objects), so
+        the policy can tell candidates apart; slot embeddings mark the object position.
+        """
         super().__init__()
+        if layout not in ("pooled", "per_object"):
+            raise ValueError(f"unknown layout {layout!r}")
+        self.layout = layout
         self.hidden_size_vlm = hidden_size_vlm
         self.hidden_size_expert = hidden_size_expert
         self.pose_dim = pose_dim
@@ -103,7 +111,7 @@ class ObjectCentric6DProjector(nn.Module):
             nn.LayerNorm(hidden),
         )
         self.fuse = nn.Sequential(nn.Linear(2 * hidden, hidden), nn.SiLU())
-        self.token_head = nn.Linear(hidden, num_tokens * hidden_size_vlm)
+        self.token_head = nn.Linear(hidden, (1 if layout == "per_object" else num_tokens) * hidden_size_vlm)
         self.slot_emb = nn.Parameter(torch.zeros(num_tokens, hidden_size_vlm))
         self.context_head = nn.Linear(hidden, hidden_size_expert)
         nn.init.normal_(self.slot_emb, std=0.02)
@@ -143,19 +151,23 @@ class ObjectCentric6DProjector(nn.Module):
 
         valid_f = obj_valid_mask.to(dtype=fused.dtype)
         fused = fused * valid_f[..., None]
-        tokens = self.token_head(fused).view(bsize, n_obj, self.num_tokens, self.hidden_size_vlm)
-        tokens = tokens * valid_f[..., None, None]
-
         denom = valid_f.sum(dim=1, keepdim=True).clamp_min(1.0)
-        tokens = (tokens.sum(dim=1) / denom[..., None]).add(self.slot_emb)
-
         any_valid = obj_valid_mask.any(dim=1, keepdim=True)
-        tokens = torch.where(any_valid[..., None], tokens, torch.zeros_like(tokens))
-        token_mask = any_valid.expand(-1, self.num_tokens)
-
         context = self.context_head(fused)
         context = (context * valid_f[..., None]).sum(dim=1) / denom
         context = torch.where(any_valid, context, torch.zeros_like(context))
+        if self.layout == "per_object":
+            if n_obj != self.num_tokens:
+                raise ValueError(f"per_object layout expects {self.num_tokens} objects, got {n_obj}")
+            tokens = self.token_head(fused) + self.slot_emb  # (B, N, D)
+            tokens = tokens * valid_f[..., None]
+            return ObjectFeatures(tokens=tokens, token_mask=obj_valid_mask, context=context, valid=obj_valid_mask)
+        tokens = self.token_head(fused).view(bsize, n_obj, self.num_tokens, self.hidden_size_vlm)
+        tokens = tokens * valid_f[..., None, None]
+
+        tokens = (tokens.sum(dim=1) / denom[..., None]).add(self.slot_emb)
+        tokens = torch.where(any_valid[..., None], tokens, torch.zeros_like(tokens))
+        token_mask = any_valid.expand(-1, self.num_tokens)
         return ObjectFeatures(tokens=tokens, token_mask=token_mask, context=context, valid=obj_valid_mask)
 
     # ------------------------------------------------------------------ internals
@@ -167,8 +179,11 @@ class ObjectCentric6DProjector(nn.Module):
         if self.training is False or (self.jitter_t <= 0 and self.jitter_r <= 0):
             return pose
         noise = torch.zeros_like(pose)
-        noise[..., 4:7] = torch.randn_like(pose[..., 4:7]) * self.jitter_t
-        noise[..., 7:13] = torch.randn_like(pose[..., 7:13]) * self.jitter_r
+        if self.pose_dim == 13:  # [box, translation, 6-D rotation]
+            noise[..., 4:7] = torch.randn_like(pose[..., 4:7]) * self.jitter_t
+            noise[..., 7:13] = torch.randn_like(pose[..., 7:13]) * self.jitter_r
+        else:  # [box, centroid, depth, score]: jitter the geometry, never the score
+            noise[..., :-1] = torch.randn_like(pose[..., :-1]) * self.jitter_t
         noise = noise * valid[..., None].to(noise.dtype)
         return pose + noise
 

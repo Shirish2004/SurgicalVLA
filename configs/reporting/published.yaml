@@ -1,0 +1,41 @@
+# Published LIBERO numbers of other VLAs: REFERENCE ONLY, never mixed into the matched
+# comparison (different training data, steps, resolution, action horizon and harness).
+# Values are success rates in percent as reported in the cited paper; re-check each against
+# the source before quoting it.
+libero:
+  - model: SmolVLA (0.45B)
+    citation: "Shukor et al., SmolVLA, arXiv:2506.01844"
+    date: 2025-06
+    protocol: "as reported in the paper (LIBERO 4 suites); its exact episodes and horizon are not stated in our notes"
+    caveats: "our harness reproduces 66.0% on Spatial with the 50-step horizon (docs/baselines.md §3)"
+    success: {libero_spatial: 90.0, libero_object: 96.0, libero_goal: 92.0, libero_10: 71.0}
+  - model: OpenVLA (7B, fine-tuned)
+    citation: "Kim et al., OpenVLA, arXiv:2406.09246"
+    date: 2024-06
+    protocol: "500 episodes per suite (50 per task), 3 seeds; their LIBERO data cleaned of no-op actions"
+    caveats: "different training data filtering; 256 px images"
+    success: {libero_spatial: 84.7, libero_object: 88.4, libero_goal: 79.2, libero_10: 53.7}
+  - model: Octo (fine-tuned)
+    citation: "reported in Kim et al., OpenVLA, arXiv:2406.09246"
+    date: 2024-06
+    protocol: "as OpenVLA"
+    caveats: "baseline trained by the OpenVLA authors"
+    success: {libero_spatial: 78.9, libero_object: 85.7, libero_goal: 84.6, libero_10: 51.1}
+  - model: Diffusion Policy (from scratch)
+    citation: "reported in Kim et al., OpenVLA, arXiv:2406.09246"
+    date: 2024-06
+    protocol: "as OpenVLA"
+    caveats: "baseline trained by the OpenVLA authors"
+    success: {libero_spatial: 78.3, libero_object: 92.5, libero_goal: 68.3, libero_10: 50.5}
+  - model: pi0 (3.3B)
+    citation: "Black et al., pi0, arXiv:2410.24164; LIBERO numbers as reported in Kim et al., OpenVLA-OFT, arXiv:2502.19645"
+    date: 2025-02
+    protocol: "as reported by OpenVLA-OFT"
+    caveats: "much larger model and pretraining corpus"
+    success: {libero_spatial: 96.8, libero_object: 98.8, libero_goal: 95.8, libero_10: 85.2}
+  - model: OpenVLA-OFT (7B)
+    citation: "Kim et al., OpenVLA-OFT, arXiv:2502.19645"
+    date: 2025-02
+    protocol: "500 episodes per suite, as OpenVLA"
+    caveats: "parallel decoding, action chunking, continuous actions, FiLM; 7B"
+    success: {libero_spatial: 97.6, libero_object: 98.4, libero_goal: 97.9, libero_10: 94.5}

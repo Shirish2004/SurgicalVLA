@@ -1,0 +1,23 @@
+{
+  "title": "SurgicalVLA result entry",
+  "description": "One row of results/results.json: one arm on one suite or benchmark. scripts/collect_results.py writes it; scripts/make_figures.py and scripts/build_baselines_doc.py read it.",
+  "type": "object",
+  "required": ["arm", "benchmark", "suite", "source", "success", "ci95", "notes"],
+  "properties": {
+    "arm": {"type": "string", "description": "arm name (configs/ablations/arms.yaml) or model name"},
+    "benchmark": {"enum": ["libero", "libero_plus", "robotwin", "vlabench"]},
+    "suite": {"type": "string", "description": "libero_spatial | libero_object | libero_goal | libero_10 | average | easy | primitive | composite"},
+    "source": {"enum": ["published", "official_checkpoint", "ours"]},
+    "model": {"type": ["string", "null"], "description": "Hub id or local path"},
+    "training": {"type": "object", "properties": {"data": {"type": ["string", "null"]}, "steps": {"type": ["integer", "null"]},
+                 "batch": {"type": ["integer", "null"]}, "seeds": {"type": "array"}}},
+    "eval": {"type": "object", "properties": {"protocol": {"type": "string"}, "eval_seeds": {"type": "array"},
+             "episodes": {"type": ["integer", "null"]}}},
+    "success": {"type": ["number", "null"], "description": "fraction in [0, 1]"},
+    "ci95": {"type": ["array", "null"], "description": "[low, high] fractions; cluster bootstrap over (task, init state) for ours"},
+    "per_seed": {"type": "array", "description": "success per training seed (ours)"},
+    "citation": {"type": ["string", "null"]},
+    "date": {"type": ["string", "null"]},
+    "notes": {"type": "string"}
+  }
+}

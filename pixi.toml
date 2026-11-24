@@ -97,9 +97,14 @@ PYOPENGL_PLATFORM = "egl"
 #   pixi run -e dev smoke                                        # full-architecture smoke test
 #   pixi run -e sim-eval python scripts/validate_pseudolabels.py --hdf5 <LIBERO demo file>
 [feature.dev.tasks]
-train = "python scripts/benchmark.py train"
-eval = "python scripts/benchmark.py eval"
+# each task takes the launcher's arguments, e.g. `pixi run -e dev train sft --benchmark libero`
+cache = "python scripts/benchmark.py cache"            # feature/label cache + traces for one suite
+train = "python scripts/benchmark.py train"            # sft | rl, per benchmark
+eval = "python scripts/benchmark.py eval"              # protocol evaluation of any checkpoint
+ablate = "python scripts/benchmark.py ablate"          # arms of configs/ablations/arms.yaml, train + eval
+compare = "python scripts/compare_arms.py"             # paired comparison of two evaluated models
+figures = "python scripts/collect_results.py && python scripts/make_figures.py && python scripts/build_baselines_doc.py"
 test = "pytest -p no:warnings -q tests"
-pilot = "python scripts/benchmark.py pilot"
-labels = "python scripts/benchmark.py labels"
 smoke = "python scripts/smoke_full_arch.py"
+pilot = "python scripts/benchmark.py ablate"           # alias of ablate
+labels = "python scripts/benchmark.py cache"           # alias of cache

@@ -10,12 +10,13 @@ generated from the results file.*
 | # | Arm | Benchmark / suite | Source | Training data and steps | Seeds | Success (CI) | Status / notes |
 |---|---|---|---|---|---|---|---|
 | 1 | `smolvla_libero` harness check | LIBERO, 4 suites | official checkpoint (`lerobot/smolvla_libero@a24f1f38`) | as released: `lerobot/libero`, 25k steps, batch 32, full fine-tune | eval 1000, 2000, 3000 | Spatial **66.0 %** (Wilson 59.2–72.2; 10 tasks × 20 states × 1 seed) vs published 90 % | **not validated**: gap explained by the 50-step open-loop horizon (85.0 % at 10 steps, exploratory only; §3). Full 4 suites × 50 states × 3 seeds pending |
-| 2 | `smolvla` (ours) | LIBERO, one model per suite | ours: SmolVLA architecture (dense expert) in our trainer | the suite's demos (432 / 454 / 428 / 379), 20k steps, batch 24 × 4 | train 0, 1, 2; eval 1000, 2000, 3000 | – | planned; the matched baseline every arm is compared with |
+| 2 | `smolvla` (ours) | LIBERO, one model per suite | ours: SmolVLA architecture (dense expert) in our trainer | the suite's demos (432 / 454 / 428 / 379), 8k steps, batch 24 × 4 | train 0, 1, 2; eval 1000, 2000, 3000 | – | planned; the matched baseline every arm is compared with |
 | 3 | other VLAs | LIBERO | published | their own (see §6) | – | §6 | reference only, never mixed into the matched comparison; no other model re-run in our harness yet (cost: one full protocol ≈ 6,000 episodes per model) |
 | 4a | `oracle_vision` | LIBERO-Spatial | ours | as 2, simulator ground truth as targets and inputs | 0, 1, 2 | – | planned first on the ladder; needs the oracle cache (not built) |
 | 4b | `aux_only`, `objtok_only`, `vision`, `frozen_control` | LIBERO-Spatial | ours | as 2 | 0, 1, 2 | – | planned; `frozen_control` = same encoders and token count, 2×2 grid, no objects |
 | 4c | `cot_explicit`, `cot_latent`, `cot_curriculum` (vs `vision` = no CoT) | LIBERO-Spatial | ours | as 2 | 0, 1, 2 | – | planned |
 | 4d | `full`, `full_moe_matched` | LIBERO-Spatial, then every suite | ours | as 2 | 0, 1, 2 | – | `full` = final model (sft.yaml defaults) |
+| 4f | `vision_lora`, `vision_lora_vis`, `full_lora` | LIBERO-Spatial; `full_lora` on every suite | ours | as 2, LoRA r16 on the VLM decoder (+ vision) | 0, 1, 2 | – | `docs/vlm_changes.md` |
 | 4e | joint vs sequential SFT+RL | LIBERO, best variant | ours | RL on fresh layouts (`init_states: false`), matched env steps | 0, 1, 2 | – | after 4a–4d |
 | 5 | LIBERO-Plus zero-shot | each suite's model on its perturbed suite | ours (`smolvla`, `full`) | none (zero-shot) | eval 1000 | – | per-perturbation breakdown |
 | 6 | RoboTwin SFT baseline | RoboTwin 2.0, 50 tasks × 100, Easy | ours | clean-50 demos per task (2,500 episodes) | 0 | – | no public SmolVLA checkpoint on the protocol data; Hard unavailable in LeRobot |

@@ -84,6 +84,9 @@ says whether a user normally touches the key.
 | `object_input` | `objects` | object tokens from past-only perception: `none`, `objects` (3 phrase candidates + end effector), `grid` (control: same encoders, 2×2 grid). Sets `num_objects`, `obj_pose_dim` (8), `obj_sam_feat_dim` and the per-object token layout | ablations |
 | `obj_candidates` | 3 | target-phrase instances per frame (must match the cache) | no |
 | `aux_source` | `expert` | what the auxiliary heads read: `expert` (trainable with a frozen VLM) or `prefix` | no |
+| `vlm_lora_rank` | 0 | LoRA on the frozen VLM (0 = off; 16 in the LoRA arms) | `*_lora` arms |
+| `vlm_lora_alpha` | 16 | LoRA scale alpha / rank | no |
+| `vlm_lora_parts` | `[text]` | `text` (16 decoder layers) and/or `vision` (SigLIP) | `vision_lora_vis` arm |
 | `object_token_ablation` | `none` | evaluation probe: `zero` or `shuffle` the object tokens (`-- --policy.object_token_ablation=zero`) | evaluation only |
 | `num_experts`, `num_shared_experts`, `moe_top_k` | 4, 1, 2 | MoE shape | no |
 | `moe_aux_loss_weight` | 0.01 | Switch load-balancing loss | no |

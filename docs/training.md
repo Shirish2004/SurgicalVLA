@@ -413,6 +413,8 @@ pixi run -e dev ablate --suite libero_spatial --dry-run          # the ladder, 3
 pixi run -e dev ablate --suite libero_object                     # other suites: smolvla vs full
 pixi run -e dev compare results/ablations/libero_spatial/smolvla results/ablations/libero_spatial/vision
 pixi run -e dev figures                                          # results.json -> PDFs, LaTeX, docs/baselines.md
+
+bash scripts/run_libero_plan.sh    # everything in order, resumable: caches, Spatial ladder, other suites, figures
 ```
 
 - **Cache.**
@@ -424,7 +426,8 @@ pixi run -e dev figures                                          # results.json 
   - A training run refuses a mismatched cache.
 - **Arms** (`configs/ablations/arms.yaml`):
   - `smolvla`, `oracle_vision`, `aux_only`, `objtok_only`, `frozen_control`, `vision`,
-    `cot_explicit`, `cot_latent`, `cot_curriculum`, `full`, `full_moe_matched`;
+    `cot_explicit`, `cot_latent`, `cot_curriculum`, `full`, `full_moe_matched`, and the LoRA arms
+    `vision_lora`, `vision_lora_vis`, `full_lora` (`docs/vlm_changes.md`);
   - all under one protocol (data, steps, batch, LR schedule, seeds, evaluation);
   - each arm sets every switch.
   - The predicted effect of each component is recorded in `docs/results_analysis.md` before

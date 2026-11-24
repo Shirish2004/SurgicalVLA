@@ -5,7 +5,7 @@ against the observations without hindsight. "Observed" is filled in from `result
 (`pixi run -e dev figures`) and the paired comparisons (`scripts/compare_arms.py`); every
 observation cites its CI and the arm it is compared with. Negative and null results stay in.
 
-Protocol: `configs/ablations/arms.yaml` (one suite, its demonstrations, 20k steps, effective
+Protocol: `configs/ablations/arms.yaml` (one suite, its demonstrations, 8k steps, effective
 batch 96, 3 training seeds × 3 evaluation seeds × 10 tasks × 50 starting states).
 
 ## Mechanistic constraints that shape the predictions
@@ -42,6 +42,9 @@ batch 96, 3 training seeds × 3 evaluation seeds × 10 tasks × 50 starting stat
 | `cot_curriculum` − `vision` | explicit → latent | **≥ `cot_latent`** | explicit supervision early, latent-only at inference | – |
 | `full` − `cot_curriculum` | up-cycled MoE (3× FFN compute) | **0 to +3 pts** | more capacity; untested routing | – |
 | `full_moe_matched` − `full` | compute-matched MoE | **−2 to 0 pts** | same FLOPs as dense; 2× inference latency from the dispatch loop | – |
+| `vision_lora` − `vision` | LoRA r16 on the VLM decoder | **+2 to +8 pts** | the released 90 % checkpoint adapted its VLM; LoRA lets every loss shape the prefix | – |
+| `vision_lora_vis` − `vision_lora` | + LoRA on SigLIP | **0 to +4 pts** | rendering domain gap (colours) is visual; costs 2× step time | – |
+| `full_lora` − `full` | LoRA on the final model | **as `vision_lora` − `vision`** | | – |
 
 Per-suite predictions for `full` − `smolvla`: largest on **Long** (multi-step tasks, where
 phases and reasoning matter) and **Spatial** (target identification); smallest on **Object**

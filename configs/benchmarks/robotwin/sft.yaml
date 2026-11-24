@@ -32,6 +32,8 @@ run:
 dataset:
   root: "/media/protomate/Seagate/shirish/robotwin_data/"
   episode_blocks: {block: 550, take: 50}   # demo_clean only (RoboTwin leaderboard protocol)
+  # the 10-task subset (scripts/robotwin_subset_episodes.py); remove to train on all 50 tasks
+  episodes: configs/data/robotwin_subset10_episodes.json
   camera_map:                         # dataset key -> policy key
     observation.images.cam_high: observation.images.camera1
     observation.images.cam_left_wrist: observation.images.camera2
@@ -92,6 +94,8 @@ smolvla_moe:
   moe_variant: "upcycled"         # upcycled | matched | dense (= SmolVLA) | dense_param_matched
   object_input: "objects"         # none | objects (target candidates + end effector) | grid (control)
   obj_candidates: 3               # target-phrase instances given to the policy per frame
+  obj_grippers: 2                 # both arms' end effectors
+  latent_cot_horizon: 30          # 1 s ahead at 30 fps
   aux_vision: true                # auxiliary vision heads on pseudo-label targets (training only)
   latent_cot: true                # latent reasoning tokens predicting a future visual latent
   cot_curriculum_steps: 25000     # explicit -> latent over this many steps (half of run.steps); latent-only at inference
@@ -104,7 +108,7 @@ aux:
   cache_name: null                # null -> the newest cache of this dataset under sidecar_root
   upload_repo: null               # Hub dataset holding evicted shards
   expect:                         # the run refuses a cache whose manifest differs in any of these
-    labeler: {stride: 4, input_stride: 1, causal_inputs: true}
+    labeler: {stride: 12, input_stride: 3, causal_inputs: true}
   track_horizon: 5                # labelled frames ahead for the point-track target
   cot_traces: true                # feed explicit reasoning traces (scripts/make_cot_traces.py)
 

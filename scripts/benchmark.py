@@ -269,7 +269,8 @@ def labels(args, extra: list[str]) -> None:
     cmds = [
         pixi("dev", "python", "scripts/make_pseudolabels.py", "--repo-id", "lerobot/libero", "--episodes", episodes,
              "--gripper-dims", "6", "--out", SIDECAR, "--stride", str(args.stride),
-             "--save-videos", f"results/pseudolabels/videos/{args.suite}", "--report", f"results/pseudolabels/{args.suite}_cost.json"),
+             "--save-videos", f"results/pseudolabels/videos/{args.suite}", "--report", f"results/pseudolabels/{args.suite}_cost.json",
+             "--offload-video", *(["--gpu-mem-gb", str(args.gpu_mem_gb)] if args.gpu_mem_gb else [])),
         pixi("dev", "python", "scripts/make_cot_traces.py", "--repo-id", "lerobot/libero", "--episodes", episodes,
              "--sidecar", SIDECAR, "--checkpoint", "lerobot/smolvla_libero",
              "--revision", "a24f1f380461b665158d52acd140152c79e8b36d", "--bootstrap"),
@@ -344,8 +345,9 @@ def main() -> None:
 
     lb = sub.add_parser("labels")
     lb.add_argument("--suite", default="libero_spatial")
-    lb.add_argument("--stride", type=int, default=2)
+    lb.add_argument("--stride", type=int, default=4)
     lb.add_argument("--limit", type=int, default=0, help="first N episodes only (0 = all)")
+    lb.add_argument("--gpu-mem-gb", type=float, help="cap labelling's GPU memory, e.g. 8 when training shares the GPU")
     lb.add_argument("--dry-run", action="store_true")
 
     args = ap.parse_args(argv)

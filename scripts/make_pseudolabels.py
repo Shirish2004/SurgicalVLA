@@ -101,6 +101,8 @@ def main() -> None:
     ap.add_argument("--report", help="write timing / disk cost per episode and per 1,000 episodes as JSON")
     ap.add_argument("--save-videos", help="directory for per-episode overlay videos of the tracked target")
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--offload-video", action="store_true", help="keep video frames in host memory (lower VRAM)")
+    ap.add_argument("--gpu-mem-gb", type=float, help="cap this process's GPU memory (e.g. when sharing the GPU with training)")
     args = ap.parse_args()
 
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
@@ -117,7 +119,14 @@ def main() -> None:
     t0 = time.time()
     from surgicalvla.pseudolabels.vision import VisionLabeler
 
-    vision = VisionLabeler(device=args.device)
+    if args.gpu_mem_gb and args.device.startswith("cuda"):
+        dev = torch.device(args.device)
+        dev = torch.device("cuda", dev.index if dev.index is not None else torch.cuda.current_device())
+        total = torch.cuda.get_device_properties(dev).total_memory / 2**30
+        torch.cuda.set_per_process_memory_fraction(min(1.0, args.gpu_mem_gb / total), dev)
+    from surgicalvla.pseudolabels.vision import VisionConfig
+
+    vision = VisionLabeler(device=args.device, config=VisionConfig(offload_video=args.offload_video))
     tracker = None
     if not args.no_tracks:
         from surgicalvla.pseudolabels.tracks import PointTracker

@@ -49,6 +49,8 @@ class VisionConfig:
     # gripper reference point for the displacement target: "centroid" of the end-effector mask,
     # the mask pixel "nearest" to the target centroid, or the "lowest" mask pixels (image space)
     gripper_point: str = "nearest"
+    # keep decoded video frames in host memory (lower VRAM, slightly slower)
+    offload_video: bool = False
 
 
 def _centroid(mask: np.ndarray) -> np.ndarray | None:
@@ -141,7 +143,10 @@ class VisionLabeler:
         n, h, w = frames.shape[:3]
         head = phrase.split()[-1]
         object_prompts = [phrase] if head == phrase else [phrase, head]
-        session = self.sam_proc.init_video_session(video=list(frames), inference_device=self.device, dtype=self.dtype)
+        session = self.sam_proc.init_video_session(
+            video=list(frames), inference_device=self.device, dtype=self.dtype,
+            video_storage_device="cpu" if self.cfg.offload_video else None,
+        )
         self.sam_proc.add_text_prompt(session, [*object_prompts, *self.cfg.gripper_prompts])
         per_frame: list[dict] = [dict() for _ in range(n)]
         prompt_ids: dict[str, set[int]] = {}

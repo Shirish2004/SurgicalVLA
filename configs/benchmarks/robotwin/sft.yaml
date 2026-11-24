@@ -46,7 +46,7 @@ model:
   policy_type: "smolvla_moe"            # "surgical" (skill-routed) | "smolvla_moe" (object-6D + CoT + phase MoE)
   vlm_model_name: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
   chunk_size: 50
-  n_action_steps: 25
+  n_action_steps: 50                 # executed per chunk at inference only; 50 = protocol horizon for every method (docs/baselines.md §3)
   n_obs_steps: 1                 
   freeze_vision_encoder: true
   attention_mode: "cross_attn"

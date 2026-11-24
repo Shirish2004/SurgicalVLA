@@ -12,7 +12,7 @@ protocol:
   repo_id: lerobot/libero
   steps: 8000                 # identical for every arm
   batch_size: 16
-  grad_accum: 1               # effective batch 16
+  grad_accum: 2               # effective batch 32 (the released SmolVLA LIBERO recipe)
   seeds: [0, 1, 2]            # training seeds, all reported
   eval_seeds: [1000, 2000, 3000]
   val_fraction: 0.0           # all demonstrations of the suite train every arm

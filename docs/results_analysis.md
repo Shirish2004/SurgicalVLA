@@ -6,7 +6,7 @@ against the observations without hindsight. "Observed" is filled in from `result
 observation cites its CI and the arm it is compared with. Negative and null results stay in.
 
 Protocol: `configs/ablations/arms.yaml` (one suite, its demonstrations, 8k steps, batch
-16, 3 training seeds × 3 evaluation seeds × 10 tasks × 50 starting states).
+16 × 2 accumulation = 32, 3 training seeds × 3 evaluation seeds × 10 tasks × 50 starting states).
 
 ## Mechanistic constraints that shape the predictions
 

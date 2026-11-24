@@ -223,6 +223,8 @@ def main():
             except Exception as e:
                 warnings.warn(f"Could not inspect checkpoint state: {e}", stacklevel=2)
 
+    # checkpoints written before the run id was saved: pass it as project.wandb_id=<id>
+    wandb_run_id = wandb_run_id or proj_cfg.get("wandb_id")
     wandb_mode = proj_cfg.get("wandb_mode", "disabled")
     logger_kwargs = dict(
         use_wandb=wandb_mode != "disabled",
@@ -260,6 +262,7 @@ def main():
         resume_from=resume_dir,
         grad_accum=run_cfg.get("grad_accum", 4),
         repo_id=args.repo_id,
+        seed=seed,
         aux_targets=build_aux_targets(cfg, config, args.repo_id, tokenizer=getattr(getattr(policy, "model", None), "_tokenizer", lambda: None)()),
     )
     trainer.fit()

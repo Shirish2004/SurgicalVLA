@@ -131,7 +131,8 @@ def train_cmds(args, extra: list[str]) -> list[list[str]]:
     b = args.benchmark
     if args.stage == "rl":
         cfg_path = args.config or f"configs/benchmarks/{b}/rl.yaml"
-        rl = [pixi("sim-eval", "python", "scripts/train_reinflow_grpo.py", "--config", cfg_path, *extra)]
+        resume = ["run.resume=true"] if getattr(args, "resume", False) else []
+        rl = [pixi("sim-eval", "python", "scripts/train_reinflow_grpo.py", "--config", cfg_path, *resume, *extra)]
         if b == "libero":
             return rl
         import yaml
@@ -164,6 +165,8 @@ def train_cmds(args, extra: list[str]) -> list[list[str]]:
     cmd = ["python", "scripts/train.py", "--config", args.config or f"configs/benchmarks/{b}/sft.yaml", "--repo_id", DATASET[b]]
     if b == "robotwin":  # local copy of robotwin_unified (root set in the config)
         cmd += ["--root", "/media/protomate/Seagate/shirish/robotwin_data"]
+    if getattr(args, "resume", False):  # newest checkpoints/step_N under the output directory
+        cmd += ["--resume", "latest"]
     if args.out:
         cmd.append(f"run.ckpt_dir={args.out}")
     return [pixi("dev", *cmd, *extra)]
@@ -309,6 +312,8 @@ def main() -> None:
     t.add_argument("--policy", default="surgicalvla", choices=["smolvla", "surgicalvla"])
     t.add_argument("--config")
     t.add_argument("--out")
+    t.add_argument("--resume", action="store_true",
+                   help="continue from the newest checkpoint in the output directory (weights, optimizer, data position, logs)")
     t.add_argument("--dry-run", action="store_true")
 
     e = sub.add_parser("eval")

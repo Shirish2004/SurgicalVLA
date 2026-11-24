@@ -1,15 +1,18 @@
 """Training loop for SurgicalVLA: optimizer/scheduler from config presets, grad clipping, periodic logging."""
 
 import os
+import random
 import re
 import warnings
 from functools import lru_cache
 
+import numpy as np
 import torch
 from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, IterableDataset
 
+from surgicalvla.training.sampler import ResumableRandomSampler
 from surgicalvla.utils.ema import EMA
 from surgicalvla.utils.logrun import ExperimentLogger
 from surgicalvla.utils.metrics import Accumulator, chunk_metrics
@@ -55,6 +58,21 @@ def collapse_obs_history(batch: dict) -> dict:
     return batch
 
 
+def get_rng_state() -> dict:
+    state = {"torch": torch.get_rng_state(), "numpy": np.random.get_state(), "python": random.getstate()}
+    if torch.cuda.is_available():
+        state["cuda"] = torch.cuda.get_rng_state_all()
+    return state
+
+
+def set_rng_state(state: dict) -> None:
+    torch.set_rng_state(state["torch"])
+    np.random.set_state(state["numpy"])
+    random.setstate(state["python"])
+    if "cuda" in state and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(state["cuda"])
+
+
 class Trainer:
     def __init__(
         self,
@@ -82,6 +100,7 @@ class Trainer:
         grad_accum: int = 4,
         repo_id: str | None = None,
         aux_targets=None,
+        seed: int = 0,
     ):
         self.grad_accum = grad_accum
         self.policy = policy.to(device)
@@ -99,8 +118,12 @@ class Trainer:
         self.repo_id = repo_id
 
         self.aux_targets = aux_targets  # surgicalvla.pseudolabels.reader.SidecarTargets or None
+        self.batch_size = batch_size
+        # Map-style data is shuffled by a sampler whose order is a function of (seed, position),
+        # so resuming skips to the saved position without loading the skipped samples.
+        self.sampler = None if isinstance(dataset, IterableDataset) else ResumableRandomSampler(len(dataset), seed)
         self.loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers,
+            dataset, batch_size=batch_size, sampler=self.sampler, num_workers=num_workers,
             pin_memory=True, drop_last=True, prefetch_factor=2, persistent_workers=False,
         )
         self.val_loader = None
@@ -117,13 +140,15 @@ class Trainer:
         self.optimizer = policy.config.get_optimizer_preset().build(policy.get_optim_params())
         self.scheduler = policy.config.get_scheduler_preset().build(self.optimizer, steps)
         self.ema = EMA(self.policy, ema_decay) if ema_decay else None
-        self.logger = ExperimentLogger(output_dir, config=policy.config, **(logger_kwargs or {}))
+        self.start_step = self._saved_step(resume_from) if resume_from else 0
+        self.logger = ExperimentLogger(
+            output_dir, config=policy.config, resume_step=self.start_step or None, **(logger_kwargs or {})
+        )
 
         dataset_stats = getattr(getattr(dataset, "meta", None), "stats", None)
         self.preprocessor, self.postprocessor = make_smolvla_pre_post_processors(
             policy.config, dataset_stats
         )
-        self.start_step = 0
         if resume_from:
             self._load_state(resume_from)
 
@@ -150,21 +175,30 @@ class Trainer:
         for raw in self.loader:
             yield collapse_obs_history(self.preprocessor(raw))
 
-    def _load_state(self, path: str):
+    @staticmethod
+    def _saved_step(path: str) -> int:
         f = os.path.join(path, "trainer_state.pt")
         if os.path.exists(f):
-            st = torch.load(f, map_location=self.device, weights_only=False)
+            return int(torch.load(f, map_location="cpu", weights_only=False)["step"])
+        m = re.search(r"step_(\d+)", path)
+        return int(m.group(1)) if m else 0
+
+    def _load_state(self, path: str):
+        """Restore optimizer, scheduler, EMA, RNG and data position saved with a checkpoint."""
+        f = os.path.join(path, "trainer_state.pt")
+        if os.path.exists(f):
+            st = torch.load(f, map_location="cpu", weights_only=False)
             self.optimizer.load_state_dict(st["optimizer"])
             self.scheduler.load_state_dict(st["scheduler"])
             if self.ema is not None and st.get("ema") is not None:
                 self.ema.load_state_dict(st["ema"])
-            self.start_step = st["step"]
-            return
-        m = re.search(r"step_(\d+)", path)
-        if m:
-            self.start_step = int(m.group(1))
+            if st.get("rng"):
+                set_rng_state(st["rng"])
+        else:
             for _ in range(self.start_step):
                 self.scheduler.step()
+        if self.sampler is not None:
+            self.sampler.set_position(self.start_step * self.grad_accum * self.batch_size)
 
     def _get_wandb_run_id(self) -> str | None:
         if hasattr(self.logger, "run_id") and self.logger.run_id:
@@ -193,6 +227,7 @@ class Trainer:
                 "ema": self.ema.state_dict() if self.ema is not None else None,
                 "wandb_run_id": run_id,
                 "repo_id": self.repo_id,
+                "rng": get_rng_state(),
             },
             f"{ckpt}/trainer_state.pt",
         )
@@ -219,7 +254,7 @@ class Trainer:
         
         data_iter = self._cycle()
 
-        if self.start_step > 0:
+        if self.start_step > 0 and self.sampler is None:  # iterable data: no random access
             batches_to_skip = self.start_step * self.grad_accum
             print(f"Resuming from step {self.start_step}. Fast-forwarding dataset iterator by {batches_to_skip} batches...")
             for _ in range(batches_to_skip):

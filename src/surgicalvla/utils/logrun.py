@@ -36,18 +36,42 @@ plt.rcParams.update(
 )
 
 
+def truncate_csv(path: str, last_step: int) -> None:
+    """Drop rows of a ``step,key,value`` log written after ``last_step``."""
+    with open(path) as f:
+        lines = f.readlines()
+    keep = [ln for ln in lines[1:] if ln.strip() and int(ln.split(",", 1)[0]) <= last_step]
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.writelines(lines[:1] + keep)
+    os.replace(tmp, path)
+
+
 class ExperimentLogger:
     """Writes scalars/images/figures to TensorBoard and saves vector-graphics copies to disk."""
 
-    def __init__(self, output_dir: str, config=None, use_wandb: bool = False, project: str = "surgicalvla", **kwargs):
+    def __init__(
+        self,
+        output_dir: str,
+        config=None,
+        use_wandb: bool = False,
+        project: str = "surgicalvla",
+        resume_step: int | None = None,
+        **kwargs,
+    ):
+        """``resume_step``: a run resumed from that step's checkpoint; logged values after it are
+        dropped from the CSV and TensorBoard so the resumed run continues one clean curve."""
         self.fig_dir = os.path.join(output_dir, "figures")
         os.makedirs(self.fig_dir, exist_ok=True)
-        self.writer = SummaryWriter(os.path.join(output_dir, "logs")) if SummaryWriter is not None else None
+        purge = {"purge_step": resume_step + 1} if resume_step is not None else {}
+        self.writer = SummaryWriter(os.path.join(output_dir, "logs"), **purge) if SummaryWriter is not None else None
         self._history: dict[str, list] = {}
         # Append-only long-format scalar log. TensorBoard/W&B are the interactive
         # views; this file is what survives when neither is installed or a run
         # dies mid-way, and it is what `plot_metrics` reads.
         self.csv_path = os.path.join(output_dir, "metrics.csv")
+        if resume_step is not None and os.path.exists(self.csv_path):
+            truncate_csv(self.csv_path, resume_step)
         self._csv_header = not os.path.exists(self.csv_path)
 
         if config is not None:
@@ -55,6 +79,7 @@ class ExperimentLogger:
                 json.dump(config.__dict__, f, default=str, indent=2)
 
         self.wandb = None
+        self.run_id = None
         if use_wandb:
             try:
                 import wandb
@@ -65,7 +90,8 @@ class ExperimentLogger:
                 for k in ["entity", "group", "job_type", "tags", "notes", "dir", "id", "resume", "reinit", "mode"]:
                     if k in kwargs:
                         init_kwargs[k] = kwargs[k]
-                self.wandb.init(**init_kwargs)
+                run = self.wandb.init(**init_kwargs)
+                self.run_id = getattr(run, "id", None)  # saved with checkpoints to resume this run
             except Exception:
                 self.wandb = None
 

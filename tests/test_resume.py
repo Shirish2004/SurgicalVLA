@@ -1,0 +1,54 @@
+"""Resuming SFT: data order, RNG, logs and the launcher flag."""
+
+from __future__ import annotations
+
+import argparse
+import itertools
+
+import scripts.benchmark as bench
+from surgicalvla.training.sampler import ResumableRandomSampler
+from surgicalvla.utils.logrun import truncate_csv
+
+
+def test_sampler_resumes_exactly_where_it_stopped():
+    full = list(itertools.islice(iter(ResumableRandomSampler(7, seed=3)), 30))
+    resumed = ResumableRandomSampler(7, seed=3)
+    resumed.set_position(17)
+    assert list(itertools.islice(iter(resumed), 13)) == full[17:]
+
+
+def test_sampler_epochs_are_permutations_with_different_orders():
+    s = list(itertools.islice(iter(ResumableRandomSampler(50, seed=0)), 100))
+    assert sorted(s[:50]) == sorted(s[50:]) == list(range(50))
+    assert s[:50] != s[50:]
+
+
+def test_csv_truncated_to_resume_step(tmp_path):
+    p = tmp_path / "metrics.csv"
+    p.write_text("step,key,value\n10,loss,1\n20,loss,0.9\n30,loss,0.8\n")
+    truncate_csv(str(p), 20)
+    assert p.read_text() == "step,key,value\n10,loss,1\n20,loss,0.9\n"
+
+
+def test_rng_state_round_trip():
+    import numpy as np
+    import torch
+
+    from surgicalvla.training.trainer import get_rng_state, set_rng_state
+
+    st = get_rng_state()
+    a = (torch.rand(3), np.random.rand(3))
+    set_rng_state(st)
+    b = (torch.rand(3), np.random.rand(3))
+    assert torch.equal(a[0], b[0]) and np.array_equal(a[1], b[1])
+
+
+def _train(**kw):
+    ns = argparse.Namespace(**{"stage": "sft", "benchmark": "libero", "policy": "surgicalvla", "config": None, "out": None, **kw})
+    return " ".join(bench.train_cmds(ns, [])[0])
+
+
+def test_launcher_resume_flag():
+    assert "--resume latest" in _train(resume=True, out="results/libero_train")
+    assert "--resume" not in _train()
+    assert "run.resume=true" in _train(stage="rl", resume=True)

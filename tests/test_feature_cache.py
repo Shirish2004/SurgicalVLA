@@ -152,8 +152,10 @@ def test_episode_reader_keeps_only_the_labelled_camera_as_uint8(monkeypatch):
         def __init__(self, *a, **k):
             self.meta = types.SimpleNamespace(camera_keys=["cam_a", "cam_b"])
 
-        def __iter__(self):  # two episodes, interleaved
-            return iter([item(0, 0), item(1, 0), item(0, 1), item(1, 1)])
+            self.eps = k.get("episodes")
+
+        def __iter__(self):  # frames out of order within the episode
+            return iter([item(e, f) for e in self.eps for f in (1, 0)])
 
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", Fake)
     args = types.SimpleNamespace(repo_id="x", root="r", revision=None, camera=None)

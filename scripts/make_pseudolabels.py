@@ -48,16 +48,12 @@ def parse_episodes(spec: str, total: int) -> list[int]:
 def iter_episodes(args, episodes: list[int], lengths: dict[int, int]):
     """Yield ``(episode_index, frames uint8 (T,H,W,3), state (T,S), action (T,A), task)``.
 
-    The stream may interleave frames of several episodes (prefetching), so frames are
-    buffered per episode and an episode is emitted once all ``lengths[ep]`` frames have
-    arrived, sorted by ``frame_index``.
+    Episodes are read one at a time (one stream per episode), so host memory holds a single
+    episode; within it, frames are ordered by ``frame_index``.
     """
     from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 
-    ds = StreamingLeRobotDataset(
-        args.repo_id, root=args.root, revision=args.revision, episodes=episodes, streaming=args.root is None, shuffle=False
-    )
-    camera = args.camera or ds.meta.camera_keys[0]
+    camera = args.camera
     buffers: dict[int, dict[int, dict]] = {}
 
     def compact(item: dict) -> dict:
@@ -74,14 +70,19 @@ def iter_episodes(args, episodes: list[int], lengths: dict[int, int]):
         return (ep, np.stack([b["frame"] for b in items]), np.stack([b["state"] for b in items]),
                 np.stack([b["action"] for b in items]), items[0]["task"])
 
-    for item in ds:
-        ep, fi = int(item["episode_index"]), int(item["frame_index"])
-        buffers.setdefault(ep, {})[fi] = compact(item)
-        if len(buffers[ep]) == lengths[ep]:
-            yield assemble(ep)
-    for ep in list(buffers):  # incomplete episodes (should not happen); label what arrived
-        print(f"warning: episode {ep} incomplete ({len(buffers[ep])}/{lengths[ep]} frames)", file=sys.stderr)
-        yield assemble(ep)
+    for want in episodes:
+        ds = StreamingLeRobotDataset(
+            args.repo_id, root=args.root, revision=args.revision, episodes=[want], streaming=args.root is None, shuffle=False
+        )
+        camera = camera or ds.meta.camera_keys[0]
+        for item in ds:
+            ep, fi = int(item["episode_index"]), int(item["frame_index"])
+            if ep == want:
+                buffers.setdefault(ep, {})[fi] = compact(item)
+        if want in buffers:
+            if len(buffers[want]) != lengths[want]:
+                print(f"warning: episode {want} incomplete ({len(buffers[want])}/{lengths[want]} frames)", file=sys.stderr)
+            yield assemble(want)
 
 
 def grasp_frame(action: np.ndarray, gripper_dims: list[int], labelled: np.ndarray) -> int | None:

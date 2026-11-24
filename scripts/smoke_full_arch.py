@@ -34,7 +34,7 @@ def build(variant: str, device: str):
     base = SmolVLAConfig.from_pretrained(path)
     fields = {f.name for f in dataclasses.fields(base)}
     kw = {f.name: getattr(base, f.name) for f in dataclasses.fields(SmolVLAMoEConfig) if f.name in fields}
-    kw.update(moe_variant=variant, aux_vision=True, latent_cot=True, use_cot=True, cot_curriculum_steps=1000)
+    kw.update(moe_variant=variant, aux_vision=True, latent_cot=True, use_cot=True, cot_curriculum_steps=1000, object_input="objects")
     policy = SmolVLAMoEPolicy.from_smolvla_pretrained(path, SmolVLAMoEConfig(**kw))
     return policy.to(device)
 
@@ -53,6 +53,10 @@ def batch_for(policy, bsize: int, device: str) -> dict:
     cot = tok(["<cot> phase: grasp | object: black bowl | motion: right </cot>"] * bsize, return_tensors="pt", padding="max_length", max_length=cfg.cot_max_tokens, add_special_tokens=False)
     b["cot_input_ids"], b["cot_attention_mask"] = cot.input_ids.to(device), cot.attention_mask.bool().to(device)
     b["subtask_phase_id"] = torch.randint(0, cfg.num_phases, (bsize,), device=device)
+    b["obj_sam_feat"] = torch.randn(bsize, cfg.num_objects, cfg.obj_sam_feat_dim, device=device)
+    b["obj_pose_vec"] = torch.rand(bsize, cfg.num_objects, cfg.obj_pose_dim, device=device)
+    b["obj_valid_mask"] = torch.ones(bsize, cfg.num_objects, dtype=torch.bool, device=device)
+    b["task"] = ["pick up the black bowl and place it on the plate"] * bsize
     b.update({"aux.obj_feat": torch.randn(bsize, cfg.aux_feat_dim, device=device), "aux.obj_feat_conf": torch.ones(bsize, device=device),
               "aux.obj_motion": torch.randn(bsize, 2, device=device) * 0.01, "aux.obj_motion_conf": torch.ones(bsize, device=device),
               "aux.track_disp": torch.randn(bsize, 2, device=device) * 0.01, "aux.track_disp_conf": torch.ones(bsize, device=device),
@@ -89,7 +93,7 @@ def measure(variant: str, bsize: int, device: str) -> dict:
         step_s = time.time() - t
     train_peak = torch.cuda.max_memory_allocated() / 2**30
     policy.eval()
-    obs = {k: v[:1] for k, v in batch.items() if k.startswith("observation.")}
+    obs = {k: v[:1] for k, v in batch.items() if k.startswith("observation.") or k.startswith("obj_")}
     with torch.no_grad():
         policy.predict_action_chunk(obs)
         torch.cuda.synchronize()
@@ -98,9 +102,34 @@ def measure(variant: str, bsize: int, device: str) -> dict:
             policy.predict_action_chunk(obs)
         torch.cuda.synchronize()
     latency_ms = (time.time() - t) / 5 * 1000
+    # explicit CoT decoding alone (cot_refresh_interval chunks share one decode)
+    with torch.no_grad():
+        images, img_masks = policy.prepare_images(obs)
+        torch.cuda.synchronize()
+        t = time.time()
+        policy.model.generate_cot(images, img_masks, obs["observation.language.tokens"], obs["observation.language.attention_mask"],
+                                  policy.prepare_state(obs), policy._objects(obs))
+        torch.cuda.synchronize()
+    cot_ms = (time.time() - t) * 1000
+    # live object perception (SAM 3 + DINOv2 + Depth Anything on one frame), once per chunk
+    from surgicalvla.perception.object_inputs import ObjectInputExtractor
+
+    extractor = ObjectInputExtractor(device=device)
+    frame = (torch.rand(256, 256, 3) * 255).byte().numpy()
+    extractor(frame[None], "black bowl")
+    torch.cuda.synchronize()
+    t = time.time()
+    for _ in range(3):
+        extractor(frame[None], "black bowl")
+    torch.cuda.synchronize()
+    perception_ms = (time.time() - t) / 3 * 1000
+    infer_peak = torch.cuda.max_memory_allocated() / 2**30
+    del extractor
     loss_terms = sorted(k for k in metrics if k.endswith("_loss"))
     row = {"variant": variant, "params_m": params / 1e6, "trainable_m": trainable / 1e6, "active_ffn_width_sum": ffn,
-           "train_step_s": step_s, "train_peak_vram_gib": train_peak, "chunk_latency_ms": latency_ms, "loss_terms": loss_terms,
+           "train_step_s": step_s, "train_peak_vram_gib": train_peak, "chunk_latency_ms": latency_ms,
+           "cot_decode_ms": cot_ms, "perception_ms": perception_ms, "peak_vram_with_perception_gib": infer_peak,
+           "loss_terms": loss_terms,
            "loss": float(loss.detach())}
     del policy, opt
     return row

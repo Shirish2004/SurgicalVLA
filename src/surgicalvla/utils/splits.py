@@ -16,7 +16,8 @@ def split_episodes(total: int, val_fraction: float, seed: int = 0, pool: list[in
     """Random train/val split of ``pool`` (default: every episode)."""
     ids = list(range(total)) if pool is None else list(pool)
     random.Random(seed).shuffle(ids)
-    n = max(1, int(round(total * val_fraction)))
+    # the fraction is of the pool being split, and at least one episode stays in training
+    n = min(max(1, int(round(len(ids) * val_fraction))), len(ids) - 1)
     return sorted(ids[n:]), sorted(ids[:n])
 
 

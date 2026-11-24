@@ -52,3 +52,12 @@ def test_launcher_resume_flag():
     assert "--resume latest" in _train(resume=True, out="results/libero_train")
     assert "--resume" not in _train()
     assert "run.resume=true" in _train(stage="rl", resume=True)
+
+
+def test_val_fraction_is_of_the_episode_pool():
+    from surgicalvla.utils.splits import split_episodes
+
+    train, val = split_episodes(1693, 0.01, pool=list(range(432)))
+    assert len(val) == 4 and len(train) == 428 and set(train) | set(val) == set(range(432))
+    train, val = split_episodes(1693, 0.5, pool=[7, 8])
+    assert len(train) == 1 and len(val) == 1

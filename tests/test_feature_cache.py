@@ -105,3 +105,23 @@ def test_object_input_config_fixes_the_token_shapes():
     with pytest.raises(ValueError):
         SmolVLAMoEConfig(object_input="bad")
 
+
+
+def test_training_data_has_no_geometric_augmentation(monkeypatch):
+    """Cached boxes, masks and tracks are in the dataset frame's coordinates; no augmentation may move pixels."""
+    import types
+
+    import surgicalvla.data.dataset as ds
+
+    seen = {}
+
+    class Fake:
+        def __init__(self, repo_id, **kw):
+            seen.update(kw)
+
+    monkeypatch.setattr(ds, "LeRobotDataset", Fake)
+    monkeypatch.setattr(ds, "LeRobotDatasetMetadata", lambda *a, **k: types.SimpleNamespace(camera_keys=[], fps=10, features={}))
+    monkeypatch.setattr(ds, "_delta_timestamps", lambda c, m: None)
+    monkeypatch.setattr(ds, "resolve_camera_map", lambda m, c: None)
+    ds.build_dataset("org/ds", config=None)
+    assert seen.get("image_transforms") is None

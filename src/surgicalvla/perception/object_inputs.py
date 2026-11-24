@@ -5,8 +5,8 @@ frame ``t`` depend on frame ``t`` only. The same code builds the offline trainin
 runs live inside the policy at evaluation, which keeps training and test inputs identical.
 
 Per frame, SAM 3 (image mode) detects instances of the target noun phrase (and its head noun)
-and of the end effector. The ``num_candidates`` best target instances that do not overlap the
-end effector, plus the best end-effector instance, become objects. Choosing among several
+and of the end effector. The ``num_candidates`` best target instances that no end effector covers, plus
+the ``num_grippers`` best distinct end-effector instances, become objects. Choosing among several
 same-class candidates (two black bowls) is left to the policy, which sees the instruction.
 
 Object descriptor:
@@ -39,6 +39,7 @@ class ObjectInputConfig:
     depth_id: str = "depth-anything/Depth-Anything-V2-Small-hf"
     gripper_prompts: tuple[str, ...] = GRIPPER_PROMPTS
     num_candidates: int = 3  # target-phrase instances kept per frame
+    num_grippers: int = 1  # end-effector instances kept per frame (2 for bimanual robots)
     score_threshold: float = 0.15  # SAM 3 instance score below which an instance is ignored
     gripper_overlap: float = 0.5  # target instances covered by the end effector more than this are dropped
     dtype: str = "float16"
@@ -51,15 +52,24 @@ class ObjectInputConfig:
 
 # --------------------------------------------------------------------------- selection (pure)
 def select_objects(instances: dict[str, list[tuple[float, np.ndarray]]], target_prompts: list[str],
-                   cfg: ObjectInputConfig) -> tuple[list[tuple[float, np.ndarray]], tuple[float, np.ndarray] | None]:
-    """``instances``: prompt -> [(score, mask)] for ONE frame. Returns (targets, gripper).
+                   cfg: ObjectInputConfig) -> tuple[list[tuple[float, np.ndarray]], list[tuple[float, np.ndarray]]]:
+    """``instances``: prompt -> [(score, mask)] for ONE frame. Returns (targets, grippers).
 
-    The gripper is the highest-scoring end-effector instance. Targets are the
-    ``num_candidates`` highest-scoring phrase instances that the gripper does not cover,
-    after merging duplicates found by both the phrase and its head noun (IoU > 0.7).
+    Grippers: the ``num_grippers`` highest-scoring end-effector instances, duplicates (found by
+    both end-effector prompts, IoU > 0.5) merged. Targets: the ``num_candidates``
+    highest-scoring phrase instances that no gripper covers, duplicates found by both the
+    phrase and its head noun (IoU > 0.7) merged.
     """
-    grip = [i for p in cfg.gripper_prompts for i in instances.get(p, []) if i[0] >= cfg.score_threshold]
-    gripper = max(grip, key=lambda i: i[0], default=None)
+    def iou(a: np.ndarray, b: np.ndarray) -> float:
+        return float((a & b).sum()) / max(float((a | b).sum()), 1.0)
+
+    grips: list[tuple[float, np.ndarray]] = []
+    for score, mask in sorted((i for p in cfg.gripper_prompts for i in instances.get(p, []) if i[0] >= cfg.score_threshold),
+                              key=lambda i: -i[0]):
+        if mask.any() and all(iou(mask, m) <= 0.5 for _, m in grips):
+            grips.append((score, mask))
+        if len(grips) == cfg.num_grippers:
+            break
     cands = sorted((i for p in target_prompts for i in instances.get(p, []) if i[0] >= cfg.score_threshold),
                    key=lambda i: -i[0])
     kept: list[tuple[float, np.ndarray]] = []
@@ -67,14 +77,14 @@ def select_objects(instances: dict[str, list[tuple[float, np.ndarray]]], target_
         area = mask.sum()
         if area == 0:
             continue
-        if gripper is not None and (mask & gripper[1]).sum() / area > cfg.gripper_overlap:
+        if any((mask & g).sum() / area > cfg.gripper_overlap for _, g in grips):
             continue
-        if any((mask & m).sum() / max((mask | m).sum(), 1) > 0.7 for _, m in kept):
+        if any(iou(mask, m) > 0.7 for _, m in kept):
             continue
         kept.append((score, mask))
         if len(kept) == cfg.num_candidates:
             break
-    return kept, gripper
+    return kept, grips
 
 
 def describe(mask: np.ndarray, score: float, depth: np.ndarray) -> np.ndarray:
@@ -179,10 +189,10 @@ class ObjectInputExtractor:
         """``frames`` ``(F, H, W, 3)`` uint8 -> per-frame arrays (each frame independent).
 
         ``obj_feat (F, K, C)``, ``obj_pose (F, K, 8)``, ``obj_valid (F, K)`` with
-        ``K = num_candidates + 1`` (candidates first, the end effector last), and the grid control
+        ``K = num_candidates + num_grippers`` (candidates first, end effectors last), and the grid control
         ``grid_feat (F, 4, C)``, ``grid_pose (F, 4, 8)``.
         """
-        k = self.cfg.num_candidates + 1
+        k = self.cfg.num_candidates + self.cfg.num_grippers
         phrase = (phrase or "").strip()
         head = phrase.split()[-1] if phrase else ""
         target_prompts = [p for p in dict.fromkeys([phrase, head]) if p]
@@ -198,10 +208,9 @@ class ObjectInputExtractor:
             grids, depth = self._dense(chunk)
             for j, frame in enumerate(chunk):
                 f = i + j
-                targets, gripper = select_objects(self._detect(frame, prompts), target_prompts, self.cfg)
+                targets, grippers = select_objects(self._detect(frame, prompts), target_prompts, self.cfg)
                 slots: list[tuple[int, float, np.ndarray]] = [(s, sc, m) for s, (sc, m) in enumerate(targets)]
-                if gripper is not None:
-                    slots.append((k - 1, gripper[0], gripper[1]))
+                slots += [(self.cfg.num_candidates + g, sc, m) for g, (sc, m) in enumerate(grippers)]
                 feats = self._pool(grids[j], [m for _, _, m in slots])
                 for (slot, sc, m), ft in zip(slots, feats, strict=True):
                     out["obj_feat"][f, slot] = ft

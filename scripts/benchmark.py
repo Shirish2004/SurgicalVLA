@@ -312,21 +312,45 @@ def ablate(args, extra: list[str]) -> None:
         sys.exit(1)
 
 
+ROBOTWIN_ROOT = "/media/protomate/Seagate/shirish/robotwin_data"
+# per benchmark: dataset, local root, gripper action dims, grippers as objects, strides (targets, inputs) for its fps
+CACHE = {
+    "libero": dict(repo="lerobot/libero", root=None, dims=["6"], grippers=1, stride=4, input_stride=1,
+                   ckpt=("lerobot/smolvla_libero", "a24f1f380461b665158d52acd140152c79e8b36d"),
+                   rename={"observation.images.image": "observation.images.camera1", "observation.images.image2": "observation.images.camera2"}),
+    "robotwin": dict(repo="lerobot/robotwin_unified", root=ROBOTWIN_ROOT, dims=["6", "13"], grippers=2, stride=12, input_stride=3,
+                     ckpt=("lerobot/smolvla_robotwin", "eb55d3a74f6cd26c6388aecd116b37b63fac144d"),
+                     rename={"observation.images.cam_high": "observation.images.camera1",
+                             "observation.images.cam_left_wrist": "observation.images.camera2",
+                             "observation.images.cam_right_wrist": "observation.images.camera3"}),
+}
+
+
 def cache(args, extra: list[str]) -> None:
-    """Feature and label cache for one suite's demonstrations, bootstrap reasoning traces, overlay videos."""
-    path = suite_episodes(args.suite).relative_to(ROOT)
-    episodes = str(path)
+    """Feature and label cache for one episode set (a LIBERO suite or the RoboTwin subset), bootstrap traces, overlay videos."""
+    c = CACHE[args.benchmark]
+    if args.benchmark == "libero":
+        path, name = suite_episodes(args.suite), args.suite
+    else:
+        path, name = ROOT / "configs" / "data" / f"robotwin_{args.suite}_episodes.json", f"robotwin_{args.suite}"
+        if not path.exists():
+            sys.exit(f"{path} missing: run `python3 scripts/robotwin_subset_episodes.py`")
+    episodes = str(path.relative_to(ROOT))
     if args.limit:
-        episodes = ",".join(map(str, json.loads(suite_episodes(args.suite).read_text())[: args.limit]))
+        episodes = ",".join(map(str, json.loads(path.read_text())[: args.limit]))
+    stride = args.stride or c["stride"]
+    input_stride = args.input_stride or c["input_stride"]
+    root = ["--root", c["root"]] if c["root"] else []
     cmds = [
-        pixi("dev", "python", "scripts/make_pseudolabels.py", "--repo-id", "lerobot/libero", "--episodes", episodes,
-             "--gripper-dims", "6", "--out", SIDECAR, "--stride", str(args.stride), "--input-stride", str(args.input_stride),
-             "--save-videos", f"results/pseudolabels/videos/{args.suite}", "--report", f"results/pseudolabels/{args.suite}_cost.json",
+        pixi("dev", "python", "scripts/make_pseudolabels.py", "--repo-id", c["repo"], *root, "--episodes", episodes,
+             "--gripper-dims", *c["dims"], "--num-grippers", str(c["grippers"]), "--out", SIDECAR,
+             "--stride", str(stride), "--input-stride", str(input_stride),
+             "--save-videos", f"results/pseudolabels/videos/{name}", "--report", f"results/pseudolabels/{name}_cost.json",
              "--offload-video", *(["--gpu-mem-gb", str(args.gpu_mem_gb)] if args.gpu_mem_gb else []),
              *(["--upload-repo", args.upload_repo] if args.upload_repo else []), *extra),
-        pixi("dev", "python", "scripts/make_cot_traces.py", "--repo-id", "lerobot/libero", "--episodes", episodes,
-             "--sidecar", SIDECAR, "--checkpoint", "lerobot/smolvla_libero",
-             "--revision", "a24f1f380461b665158d52acd140152c79e8b36d", "--bootstrap"),
+        pixi("dev", "python", "scripts/make_cot_traces.py", "--repo-id", c["repo"], *root, "--episodes", episodes,
+             "--sidecar", SIDECAR, "--checkpoint", c["ckpt"][0], "--revision", c["ckpt"][1], "--bootstrap",
+             "--rename", json.dumps(c["rename"])),  # dataset camera -> policy camera
     ]
     execute(cmds if not args.no_traces else cmds[:1], args.dry_run)
 
@@ -397,11 +421,12 @@ def main() -> None:
     pl.add_argument("--dry-run", action="store_true")
 
     lb = sub.add_parser("cache", aliases=["labels"], help="feature/label cache for one LIBERO suite")
-    lb.add_argument("--suite", default="libero_spatial")
-    lb.add_argument("--stride", type=int, default=4)
+    lb.add_argument("--benchmark", default="libero", choices=["libero", "robotwin"])
+    lb.add_argument("--suite", default="libero_spatial", help="LIBERO suite, or the RoboTwin subset name (e.g. subset10)")
+    lb.add_argument("--stride", type=int, help="targets every k-th frame (default per benchmark: LIBERO 4, RoboTwin 12)")
     lb.add_argument("--limit", type=int, default=0, help="first N episodes only (0 = all)")
     lb.add_argument("--gpu-mem-gb", type=float, help="cap labelling's GPU memory, e.g. 8 when training shares the GPU")
-    lb.add_argument("--input-stride", type=int, default=1, help="object inputs on every k-th frame")
+    lb.add_argument("--input-stride", type=int, help="object inputs every k-th frame (default: LIBERO 1, RoboTwin 3)")
     lb.add_argument("--upload-repo", help="Hub dataset for finished shards (bounded local disk)")
     lb.add_argument("--no-traces", action="store_true", help="skip the bootstrap reasoning traces")
     lb.add_argument("--dry-run", action="store_true")

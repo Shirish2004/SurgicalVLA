@@ -35,6 +35,7 @@ class SmolVLAMoEConfig(SmolVLAConfig):
     # them live from the current frame (attach_live_perception).
     object_input: str = "none"
     obj_candidates: int = 3
+    obj_grippers: int = 1  # end effectors given as objects (2 for bimanual robots)
     obj_token_layout: str = "pooled"  # pooled: num_object_tokens shared slots; per_object: one token per object
     # evaluation-only probe of how much the policy uses the object tokens: zero | shuffle
     object_token_ablation: str = "none"
@@ -127,7 +128,7 @@ class SmolVLAMoEConfig(SmolVLAConfig):
         if self.object_input != "none":
             self.obj_sam_feat_dim = self.aux_feat_dim
             self.obj_pose_dim = 8
-            self.num_objects = self.obj_candidates + 1 if self.object_input == "objects" else 4
+            self.num_objects = self.obj_candidates + self.obj_grippers if self.object_input == "objects" else 4
             self.obj_token_layout = "per_object"
             self.num_object_tokens = self.num_objects
         if self.moe_variant not in ("upcycled", "matched", "dense", "dense_param_matched"):

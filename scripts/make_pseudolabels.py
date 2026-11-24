@@ -178,6 +178,7 @@ def main() -> None:
     ap.add_argument("--stride", type=int, default=4, help="targets on every k-th frame")
     ap.add_argument("--input-stride", type=int, default=1, help="policy inputs on every k-th frame")
     ap.add_argument("--gripper-dims", type=int, nargs="+", required=True, help="action dimensions that command grippers")
+    ap.add_argument("--num-grippers", type=int, default=1, help="end effectors given as policy-input objects (2 for bimanual)")
     ap.add_argument("--no-tracks", action="store_true", help="skip TAPNext++ point tracks")
     ap.add_argument("--no-vlm", action="store_true", help="noun phrase from the rule only")
     ap.add_argument("--out", default="pseudolabels", help="cache root")
@@ -201,7 +202,7 @@ def main() -> None:
     meta = LeRobotDatasetMetadata(args.repo_id, root=args.root, revision=args.revision)
     spec = args.episodes
     episodes = [int(e) for e in json.loads(Path(spec).read_text())] if spec.endswith(".json") else parse_episodes(spec, meta.total_episodes)
-    vision_cfg, input_cfg = VisionConfig(offload_video=args.offload_video), ObjectInputConfig()
+    vision_cfg, input_cfg = VisionConfig(offload_video=args.offload_video), ObjectInputConfig(num_grippers=args.num_grippers)
     manifest = provenance(args, vision_cfg, input_cfg, None if args.no_tracks else str(DEFAULT_CKPT))
     cache = FeatureCache(args.out, args.repo_id, args.name or f"v3-{manifest['config_hash'][:12]}", manifest=manifest,
                          max_gb=args.max_gb, upload_repo=args.upload_repo)
@@ -227,7 +228,7 @@ def main() -> None:
     vlm = None if args.no_vlm else VLMPhraseExtractor(device=args.device)
     load_s = time.time() - t0
     torch.cuda.reset_peak_memory_stats()
-    k, c, p = input_cfg.num_candidates + 1, inputs_x.feat_dim, 32
+    k, c, p = input_cfg.num_candidates + input_cfg.num_grippers, inputs_x.feat_dim, 32
 
     rows = []
     t_read = time.time()
@@ -271,7 +272,8 @@ def main() -> None:
                 write_mp4(overlay_frames(sub, labels), Path(args.save_videos) / f"ep_{ep:06d}.mp4", fps=fps)
             row = {"episode": ep, "frames": int(len(frames)), "labelled": int(len(idx)), "input_frames": int(len(frames[:: args.input_stride])),
                    "phrase": phrase, "obj_valid": float((vis["obj_score"] > 0).mean()) if vis is not None else 0.0,
-                   "inputs_valid": float(inputs["obj_valid"][:, :-1].any(axis=1).mean()), **timing}
+                   "inputs_valid": float(inputs["obj_valid"][:, : input_cfg.num_candidates].any(axis=1).mean()),
+                   "grippers_found": float(inputs["obj_valid"][:, input_cfg.num_candidates :].sum(axis=1).mean()), **timing}
             rows.append(row)
             print(json.dumps({kk: (round(v, 2) if isinstance(v, float) else v) for kk, v in row.items()}), flush=True)
             t_read = time.time()

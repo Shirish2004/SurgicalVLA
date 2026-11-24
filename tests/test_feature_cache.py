@@ -58,8 +58,8 @@ def test_object_selection_drops_the_gripper_and_duplicates():
     m = lambda y0, y1: np.pad(np.ones((y1 - y0, 4), bool), ((y0, 16 - y1), (0, 12)))  # noqa: E731
     inst = {"bowl": [(0.8, m(0, 4)), (0.7, m(0, 4)), (0.6, m(8, 12))], "black bowl": [(0.5, m(12, 16))],
             "robot end effector": [(0.9, m(8, 12))], "robot hand": []}
-    targets, gripper = select_objects(inst, ["black bowl", "bowl"], cfg)
-    assert gripper[0] == 0.9
+    targets, grippers = select_objects(inst, ["black bowl", "bowl"], cfg)
+    assert [g[0] for g in grippers] == [0.9]
     assert [t[0] for t in targets] == [0.8, 0.5]  # duplicate 0.7 merged, 0.6 is the gripper
     pose = describe(m(0, 4), 0.8, np.full((16, 16), 0.3))
     assert pose.shape == (8,) and pose[6] == pytest.approx(0.3) and pose[7] == pytest.approx(0.8)
@@ -77,6 +77,15 @@ def test_eviction_keeps_disk_bounded(tmp_path):
         s["uploaded"] = True  # as if pushed to the Hub
     cache.add({"episode": 2, "length": 2}, row())
     assert not (cache.shard_dir / "frames-00000.parquet").exists() and cache.disk_bytes() <= cache.max_bytes
+
+
+def test_two_grippers_for_bimanual_robots():
+    cfg = ObjectInputConfig(num_candidates=1, num_grippers=2)
+    m = lambda x0: np.pad(np.ones((4, 4), bool), ((0, 12), (x0, 12 - x0)))  # noqa: E731
+    inst = {"robot end effector": [(0.9, m(0)), (0.8, m(8))], "robot hand": [(0.85, m(0))], "cup": [(0.7, m(4))]}
+    targets, grippers = select_objects(inst, ["cup"], cfg)
+    assert [g[0] for g in grippers] == [0.9, 0.8]  # duplicate 0.85 (same mask as 0.9) merged
+    assert [t[0] for t in targets] == [0.7]
 
 
 def test_per_object_tokens_and_usage_probe():

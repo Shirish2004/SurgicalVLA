@@ -49,7 +49,7 @@ def _make_policy_with_perception(*args, **kwargs):
     if getattr(cfg, "object_input", "none") != "none" and hasattr(policy, "attach_live_perception"):
         from surgicalvla.perception.object_inputs import ObjectInputConfig, ObjectInputExtractor
 
-        policy.attach_live_perception(ObjectInputExtractor(ObjectInputConfig(num_candidates=cfg.obj_candidates),
+        policy.attach_live_perception(ObjectInputExtractor(ObjectInputConfig(num_candidates=cfg.obj_candidates, num_grippers=cfg.obj_grippers),
                                                            device=str(cfg.device or "cuda")))
     return policy
 

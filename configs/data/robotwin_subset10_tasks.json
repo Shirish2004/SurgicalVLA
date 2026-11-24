@@ -1,0 +1,12 @@
+[
+ "handover_block",
+ "handover_mic",
+ "blocks_ranking_rgb",
+ "pick_diverse_bottles",
+ "place_a2b_right",
+ "place_cans_plasticbox",
+ "place_container_plate",
+ "place_dual_shoes",
+ "place_object_scale",
+ "place_object_stand"
+]

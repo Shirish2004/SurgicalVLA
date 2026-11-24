@@ -112,7 +112,7 @@ def cache_expectations(cfg: dict, config) -> dict:
     expect.update({k: v for k, v in (aux.get("expect") or {}).items() if k != "labeler"})
     if getattr(config, "object_input", "none") != "none":
         expect["labeler"]["causal_inputs"] = True
-        expect["labeler"].setdefault("object_inputs", {})["num_candidates"] = config.obj_candidates
+        expect["labeler"].setdefault("object_inputs", {}).update(num_candidates=config.obj_candidates, num_grippers=config.obj_grippers)
     return expect
 
 

@@ -273,19 +273,43 @@ def arm_overrides(spec: dict, arm: str, suite: str, seed: int, steps: int | None
 
 
 def ablate(args, extra: list[str]) -> None:
-    """Each arm x seed: SFT on one LIBERO suite under the shared protocol, then evaluation."""
+    """Each arm x seed: SFT on one LIBERO suite under the shared protocol, then evaluation.
+
+    Safe to re-run: finished training runs and evaluations are skipped, interrupted training
+    resumes from its newest checkpoint, arms whose cache does not exist yet are skipped, and a
+    failed run is reported without stopping the others.
+    """
     spec = load_arms()
     arms = args.arms or (spec["ladder"] if args.suite == "libero_spatial" else spec["per_suite"])
+    steps = args.steps or spec["protocol"]["steps"]
+    failed = []
     for arm in arms:
+        need = spec["arms"][arm].get("requires_cache")
+        if need and not args.dry_run and not list((ROOT / SIDECAR).glob(f"*/{need}/manifest.json")):
+            print(f"# skip {arm}: needs the '{need}' cache, not built yet", flush=True)
+            continue
         for seed in args.seeds or spec["protocol"]["seeds"]:
             out, over = arm_overrides(spec, arm, args.suite, seed, args.steps)
+            ckpts = ROOT / out / "checkpoints"
+            done = (ckpts / f"step_{steps}" / "model.safetensors").exists()
+            resume = ["--resume", "latest"] if ckpts.exists() and any(ckpts.glob("step_*")) and not done else []
             train = pixi("dev", "python", "scripts/train.py", "--config", spec["protocol"]["config"],
-                         "--repo_id", spec["protocol"]["repo_id"], *over, *extra)
-            execute([train], args.dry_run)
+                         "--repo_id", spec["protocol"]["repo_id"], *resume, *over, *extra)
+            res = ROOT / f"results/ablations/{args.suite}/{arm}/seed{seed}"
             ev = argparse.Namespace(benchmark="libero", checkpoint=out, revision=None, name=f"{arm}_seed{seed}",
-                                    out=f"results/ablations/{args.suite}/{arm}/seed{seed}",
-                                    seeds=spec["protocol"]["eval_seeds"], suites=[args.suite], tasks=None, local=False)
-            execute(eval_cmds(ev, []), args.dry_run)
+                                    out=str(res.relative_to(ROOT)), seeds=spec["protocol"]["eval_seeds"],
+                                    suites=[args.suite], tasks=None, local=False)
+            try:
+                if not done:
+                    execute([train], args.dry_run)
+                if not (res / "summary.json").exists() or args.dry_run:
+                    execute(eval_cmds(ev, []), args.dry_run)
+            except SystemExit as exc:
+                failed.append(f"{arm}/seed{seed} (exit {exc.code})")
+                print(f"# FAILED {arm} seed {seed}: exit {exc.code}; continuing", flush=True)
+    if failed:
+        print("# failed runs: " + ", ".join(failed), flush=True)
+        sys.exit(1)
 
 
 def cache(args, extra: list[str]) -> None:

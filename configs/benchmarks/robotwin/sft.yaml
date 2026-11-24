@@ -95,6 +95,8 @@ smolvla_moe:
   aux_vision: true                # auxiliary vision heads on pseudo-label targets (training only)
   latent_cot: true                # latent reasoning tokens predicting a future visual latent
   cot_curriculum_steps: 25000     # explicit -> latent over this many steps (half of run.steps); latent-only at inference
+  vlm_lora_rank: 0                # LoRA on the frozen VLM (0 = off); see docs/vlm_changes.md and the *_lora arms
+  vlm_lora_parts: [text]          # text (decoder) | vision (SigLIP)
 
 # Pseudo-label sidecar (scripts/make_pseudolabels.py); used only when a switch above needs it
 aux:

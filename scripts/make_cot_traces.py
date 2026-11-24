@@ -59,6 +59,7 @@ def main() -> None:
     ap.add_argument("--revision")
     ap.add_argument("--rename", default='{"observation.images.image": "observation.images.camera1", "observation.images.image2": "observation.images.camera2"}')
     ap.add_argument("--cache-name", help="cache under --sidecar (default: the newest)")
+    ap.add_argument("--overwrite", action="store_true", help="re-score episodes that already have traces")
     ap.add_argument("--bootstrap", action="store_true", help="round 1: keep the full trace for every segment, unfiltered")
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
@@ -84,6 +85,12 @@ def main() -> None:
     spec = args.episodes
     episodes = [int(e) for e in (json.loads(Path(spec).read_text()) if spec.endswith(".json") else spec.split(","))]
     episodes = [e for e in episodes if cache.done(e)]
+    have = {int(e) for sh in cache.manifest.get("cot_shards", []) for e in sh["episodes"]}
+    if not args.overwrite:
+        episodes = [e for e in episodes if e not in have]
+    print(f"{len(episodes)} episodes to score ({len(have)} already have traces)", flush=True)
+    if not episodes:
+        return
     meta = LeRobotDatasetMetadata(args.repo_id, root=args.root)
     from lerobot.datasets.factory import resolve_delta_timestamps
 

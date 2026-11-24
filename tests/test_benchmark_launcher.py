@@ -112,7 +112,9 @@ def test_each_comparison_differs_only_in_the_factor_under_test():
     spec = bench.load_arms()
     expected = {"aux_only": {"smolvla_moe.aux_vision"}, "objtok_only": {"smolvla_moe.object_input"},
                 "frozen_control": {"smolvla_moe.object_input"}, "full": {"smolvla_moe.moe_variant"},
-                "full_moe_matched": {"smolvla_moe.moe_variant"}, "cot_latent": {"smolvla_moe.latent_cot"}}
+                "full_moe_matched": {"smolvla_moe.moe_variant"}, "cot_latent": {"smolvla_moe.latent_cot"},
+                "vision_lora": {"smolvla_moe.vlm_lora_rank"}, "vision_lora_vis": {"smolvla_moe.vlm_lora_parts"},
+                "full_lora": {"smolvla_moe.vlm_lora_rank"}}
     for arm, factor in expected.items():
         a, b = spec["arms"][arm]["set"], spec["arms"][spec["arms"][arm]["compare_to"]]["set"]
         assert {k for k in a if a[k] != b[k]} == factor, arm

@@ -98,6 +98,25 @@ class SidecarTargets:
         out["subtask_phase_id"] = np.int64(min(int(seg), self.num_phases - 1))
         return out
 
+    def overlay(self, ep: int, frame: int, image: np.ndarray) -> np.ndarray | None:
+        """``image`` (H, W, 3) uint8 of ``frame`` with its pseudo-labels drawn (None if unlabelled).
+
+        Labels come from the nearest labelled frame at or before ``frame``.
+        """
+        from surgicalvla.pseudolabels.viz import draw_frame
+
+        d = self._episode(int(ep))
+        if d is None or "obj_score" not in d:
+            return None
+        idx = d["frame_index"]
+        j = int(np.clip(np.searchsorted(idx, frame, side="right") - 1, 0, len(idx) - 1))
+        phase = int(phase_ids(int(idx[-1]) + 1, d["phase_frames"])[min(int(frame), int(idx[-1]))])
+        lines = [f"ep {int(ep)} frame {int(frame)} phase {phase}"]
+        trace = self.trace(int(ep), int(frame))
+        if trace:
+            lines.append(trace.replace("<cot>", "").replace("</cot>", "").strip()[:60])
+        return draw_frame(image, d, j, trail=self.track_horizon, lines=tuple(lines))
+
     def for_batch(self, episode_index, frame_index) -> dict[str, torch.Tensor]:
         eps = torch.as_tensor(episode_index).reshape(-1).tolist()
         frames = torch.as_tensor(frame_index).reshape(-1).tolist()

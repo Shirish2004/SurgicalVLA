@@ -119,6 +119,25 @@ def build_aux_targets(cfg: dict, config, repo_id: str, tokenizer=None):
     )
 
 
+def build_label_viz(cfg: dict, config, repo_id: str, camera_map: dict | None):
+    """Sidecar reader for drawing pseudo-labels on logged frames, and the policy camera they belong to.
+
+    Active whenever ``aux.sidecar_root`` is set, also with every auxiliary switch off: it only
+    draws images and never adds training targets.
+    """
+    aux = cfg.get("aux") or {}
+    if not aux.get("sidecar_root"):
+        return None, None
+    from surgicalvla.pseudolabels.reader import SidecarTargets
+
+    reader = SidecarTargets(aux["sidecar_root"], repo_id, feat_dim=getattr(config, "aux_feat_dim", 384),
+                            track_horizon=int(aux.get("track_horizon", 5)), num_phases=getattr(config, "num_phases", 4))
+    labelled = (reader.store.manifest.get("config") or {}).get("camera")
+    keys = list(config.image_features)
+    key = (camera_map or {}).get(labelled) if labelled else None
+    return reader, key or (keys[0] if keys else None)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -241,6 +260,11 @@ def main():
         if k in log_cfg and k not in logger_kwargs:
             logger_kwargs[k] = log_cfg[k]
 
+    label_viz, label_image_key = build_label_viz(cfg, config, args.repo_id, camera_map)
+    from surgicalvla.utils.hub import push_checkpoint
+
+    hub_cfg = {**cfg, "dataset": {**ds_cfg, "repo_id": args.repo_id}}
+    push_fn = (lambda path, step: push_checkpoint(path, hub_cfg, "sft", step)) if (cfg.get("hub") or {}).get("push") else None
     trainer = Trainer(
         policy,
         dataset,
@@ -263,6 +287,10 @@ def main():
         grad_accum=run_cfg.get("grad_accum", 4),
         repo_id=args.repo_id,
         seed=seed,
+        label_viz=label_viz,
+        push_fn=push_fn,
+        push_every_save=bool((cfg.get("hub") or {}).get("push_every_save", False)),
+        label_image_key=label_image_key,
         aux_targets=build_aux_targets(cfg, config, args.repo_id, tokenizer=getattr(getattr(policy, "model", None), "_tokenizer", lambda: None)()),
     )
     trainer.fit()

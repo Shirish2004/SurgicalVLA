@@ -85,3 +85,15 @@ run:
   out_dir: "outputs/robotwin/rl"
   seed: 0
   resume: false                     # true -> continue from outputs/robotwin/rl/rl_state.pt
+
+# Hugging Face Hub (src/surgicalvla/utils/hub.py, docs/training.md#hub). Each trained model is its
+# own repository <namespace>/surgical-vla-<model-name>, all gathered in the "surgical-vla"
+# collection. The final checkpoint is pushed when training completes; optimizer state stays local.
+hub:
+  push: true
+  namespace: "Shirish24"
+  model_name: null                  # null -> derived from this run's settings, e.g. robotwin-rl-sequential-<suite>-s0;
+                                    # or a template such as "{benchmark}-rl-{variant}-mytest-s{seed}"
+  private: true                     # create the repository private; make it public on the Hub when ready
+  push_every_save: false            # true -> also push every intermediate checkpoint
+  collection: "surgical-vla"

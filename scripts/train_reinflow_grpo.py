@@ -39,6 +39,7 @@ from surgicalvla.rl import (
     rollout_episode,
 )
 from surgicalvla.utils.config import load_config
+from surgicalvla.utils.hub import push_checkpoint
 from surgicalvla.utils.logrun import ExperimentLogger
 
 
@@ -63,6 +64,14 @@ def checkpoint_dataset_id(checkpoint: Path) -> str | None:
     if not train_cfg.is_file():
         return None
     return (json.loads(train_cfg.read_text()).get("dataset") or {}).get("repo_id")
+
+
+def save_policy(policy, path: str) -> None:
+    """Weights, config and the normaliser the policy runs with (lerobot-eval reads all three)."""
+    policy.save_pretrained(path)
+    for proc in (getattr(policy, "_rl_preprocessor", None), getattr(policy, "_rl_postprocessor", None)):
+        if proc is not None:
+            proc.save_pretrained(path)
 
 
 def build_policy(cfg: dict, device: str) -> SmolVLAMoEPolicy:
@@ -468,7 +477,7 @@ def main():
 
             if it % int(run_cfg.get("save_every", 25)) == 0:
                 ckpt_dir = os.path.join(out_dir, f"step_{it:06d}")
-                policy.save_pretrained(ckpt_dir)
+                save_policy(policy, ckpt_dir)
                 state = {
                     "iteration": it,
                     "optimizer": optimizer.state_dict(),
@@ -483,8 +492,9 @@ def main():
                 print(f"           saved {ckpt_dir}")
         # Only a completed run gets a final/ (the pipeline's hand-off point).
         final = os.path.join(out_dir, "final")
-        policy.save_pretrained(final)
+        save_policy(policy, final)
         print(f"saved {final}")
+        push_checkpoint(final, cfg, "rl", iters)
     finally:
         client.close()
         logger.close()

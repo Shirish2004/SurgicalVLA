@@ -2,6 +2,8 @@
 #   python3 scripts/benchmark.py train sft --benchmark vlabench
 # Branches without a training signal yet (CoT, phase, pose, object tokens) are
 # EXPERIMENTAL: see docs/limitations.md before claiming them.
+benchmark: vlabench                    # used for the Hub model name
+
 project:
   wandb_project: "surgical-vla"      # W&B entity/project grouping for runs
   wandb_mode: "online"                # "online" | "offline" | "disabled"; "disabled" skips W&B entirely
@@ -101,5 +103,17 @@ aux:
 logging:
   enable_visual_logging: true
   log_dir: "logs"
-  log_every_n_steps: 200             # write panels + CSV row every N steps
+  log_every_n_steps: 400             # images: camera frames, action plots, MoE heatmap, pseudo-label overlays
   max_log_panels: 50                 # rolling cap per camera -- not yet enforced in logging.py
+
+# Hugging Face Hub (src/surgicalvla/utils/hub.py, docs/training.md#hub). Each trained model is its
+# own repository <namespace>/surgical-vla-<model-name>, all gathered in the "surgical-vla"
+# collection. The final checkpoint is pushed when training completes; optimizer state stays local.
+hub:
+  push: true
+  namespace: "Shirish24"
+  model_name: null                  # null -> derived from this run's settings, e.g. vlabench-sft-upcycled-s0;
+                                    # or a template such as "{benchmark}-sft-{variant}-mytest-s{seed}"
+  private: true                     # create the repository private; make it public on the Hub when ready
+  push_every_save: false            # true -> also push every intermediate checkpoint
+  collection: "surgical-vla"

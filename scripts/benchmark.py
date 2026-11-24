@@ -127,6 +127,17 @@ def served(benchmark: str, task: str, out_dir: Path, inner: list[list[str]]) -> 
 
 
 # ----------------------------------------------------------------------------- train
+def baseline_hub_args(b: str) -> list[str]:
+    """lerobot-train pushes the baseline to <namespace>/surgical-vla-<b>-smolvla-baseline-s1000 (hub: in sft.yaml)."""
+    import yaml
+
+    hub = yaml.safe_load((ROOT / f"configs/benchmarks/{b}/sft.yaml").read_text()).get("hub") or {}
+    if not hub.get("push"):
+        return ["--policy.push_to_hub=false"]
+    repo = f"{hub.get('namespace', 'Shirish24')}/surgical-vla-{b}-smolvla-baseline-s1000"
+    return ["--policy.push_to_hub=true", f"--policy.repo_id={repo}", f"--policy.private={str(hub.get('private', True)).lower()}"]
+
+
 def train_cmds(args, extra: list[str]) -> list[list[str]]:
     b = args.benchmark
     if args.stage == "rl":
@@ -153,7 +164,7 @@ def train_cmds(args, extra: list[str]) -> list[list[str]]:
             pixi(
                 "dev", "lerobot-train",
                 f"--policy.path={SMOLVLA_BASE[0]}", f"--policy.pretrained_revision={SMOLVLA_BASE[1]}",
-                "--policy.push_to_hub=false", "--policy.device=cuda",
+                *baseline_hub_args(b), "--policy.device=cuda",
                 f"--dataset.repo_id={DATASET[b]}", f"--rename_map={json.dumps(RENAME[b])}",
                 *recipe, "--save_freq=5000", "--seed=1000", "--num_workers=4",
                 f"--output_dir={out}", f"--job_name=smolvla_{b}",

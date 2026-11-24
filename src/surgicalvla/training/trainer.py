@@ -101,6 +101,10 @@ class Trainer:
         repo_id: str | None = None,
         aux_targets=None,
         seed: int = 0,
+        label_viz=None,
+        label_image_key: str | None = None,
+        push_fn=None,
+        push_every_save: bool = False,
     ):
         self.grad_accum = grad_accum
         self.policy = policy.to(device)
@@ -118,6 +122,13 @@ class Trainer:
         self.repo_id = repo_id
 
         self.aux_targets = aux_targets  # surgicalvla.pseudolabels.reader.SidecarTargets or None
+        # sidecar reader used only to draw pseudo-labels on logged frames (never a training signal)
+        self.label_viz = label_viz
+        self.label_image_key = label_image_key
+        self._last_ids = None
+        # push_fn(checkpoint_dir, step): Hub upload of the final checkpoint (or every one)
+        self.push_fn = push_fn
+        self.push_every_save = push_every_save
         self.batch_size = batch_size
         # Map-style data is shuffled by a sampler whose order is a function of (seed, position),
         # so resuming skips to the saved position without loading the skipped samples.
@@ -159,6 +170,7 @@ class Trainer:
         return {k: v.to(self.device, non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
 
     def _prep(self, raw: dict) -> dict:
+        self._last_ids = (raw.get("episode_index"), raw.get("frame_index"))
         batch = self.preprocessor(raw)
         if getattr(self.policy.config, "latent_cot", False):
             batch = split_future_frames(batch, list(self.policy.config.image_features))
@@ -234,6 +246,8 @@ class Trainer:
         if run_id:
             with open(os.path.join(ckpt, "wandb_run_id.txt"), "w") as f:
                 f.write(run_id)
+        if self.push_fn is not None and (step == self.steps or self.push_every_save):
+            self.push_fn(ckpt, step)
 
     def _safe_log_scalars(self, scalars: dict, step: int):
         try:
@@ -241,9 +255,9 @@ class Trainer:
         except Exception as exc:
             warnings.warn(f"Logging scalars failed at step {step} (resuming catch-up step): {exc}", stacklevel=2)
 
-    def _safe_log_expert_usage(self, usage: dict, step: int):
+    def _safe_log_expert_usage(self, usage: dict, step: int, heatmap: bool = True):
         try:
-            self.logger.log_expert_usage(usage, step)
+            self.logger.log_expert_usage(usage, step, heatmap=heatmap)
         except Exception:
             pass
 
@@ -296,7 +310,8 @@ class Trainer:
                 self._safe_log_scalars(loss_dict, step)
                 usage = self.policy.expert_usage() if hasattr(self.policy, "expert_usage") else {}
                 if usage:
-                    self._safe_log_expert_usage(usage, step)
+                    heatmap = self.visual_logging and step % self.visual_every == 0
+                    self._safe_log_expert_usage(usage, step, heatmap=heatmap)
 
             if step % self.eval_every == 0 or step == self.steps:
                 self.validate(step)
@@ -372,6 +387,27 @@ class Trainer:
         pol.train()
         return out
 
+    def _log_pseudolabels(self, sub: dict, step: int, n: int):
+        """Frames of the current batch with their SAM 3 / TAPNext++ / depth / phase pseudo-labels."""
+        if self.label_viz is None or self._last_ids is None or self.label_image_key not in sub:
+            return
+        eps, frames = self._last_ids
+        if eps is None or frames is None:
+            return
+        imgs = sub[self.label_image_key][:n].float().clamp(0, 1).cpu()
+        drawn = []
+        for img, ep, fr in zip(imgs, torch.as_tensor(eps).reshape(-1)[:n].tolist(), torch.as_tensor(frames).reshape(-1)[:n].tolist(), strict=False):
+            arr = (img.permute(1, 2, 0).numpy() * 255).round().astype(np.uint8)
+            if max(arr.shape[:2]) < 512:  # draw at 2x so the text stays legible
+                from PIL import Image
+
+                arr = np.array(Image.fromarray(arr).resize((arr.shape[1] * 2, arr.shape[0] * 2)))
+            out = self.label_viz.overlay(int(ep), int(fr), arr)
+            if out is not None:
+                drawn.append(torch.from_numpy(out).permute(2, 0, 1).float() / 255)
+        if drawn:
+            self.logger.log_images(torch.stack(drawn), step, tag="pseudolabels", nrow=min(4, len(drawn)))
+
     @torch.no_grad()
     def _log_preview(self, batch: dict, step: int):
         import traceback
@@ -389,6 +425,10 @@ class Trainer:
             for image_key in self.policy.config.image_features:
                 if image_key in sub:
                     self.logger.log_images(sub[image_key].float().cpu(), step, tag=image_key.rsplit(".", 1)[-1])
+        except Exception:
+            traceback.print_exc()
+        try:
+            self._log_pseudolabels(sub, step, n)
         except Exception:
             traceback.print_exc()
         finally:

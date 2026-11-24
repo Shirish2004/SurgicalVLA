@@ -13,7 +13,7 @@ on LIBERO, RoboTwin 2.0 and VLABench. Every key named here is explained in
 - [6. Logging: where the graphs are](#6-logging-where-the-graphs-are)
 - [7. Resuming](#7-resuming)
 - [8. Hugging Face Hub](#8-hugging-face-hub)
-- [9. Auxiliary supervision and the ablation pilot](#9-auxiliary-supervision-and-the-ablation-pilot)
+- [9. Feature cache and ablations](#9-feature-cache-and-ablations)
 - [10. Integrity rules](#10-integrity-rules)
 - [11. Troubleshooting](#11-troubleshooting)
 
@@ -104,7 +104,7 @@ evaluation (`docs/evaluation.md`).
 | `smolvla_moe.use_cot` | true | false unless `aux.cot_traces: true` | without traces there is no CoT loss, so the flag does nothing |
 | `model.freeze_vision_encoder`, `model.train_expert_only` | true, true | keep | the published LIBERO checkpoint unfroze both (full fine-tune); we keep the frozen VLM until the VLM-change study |
 | `model.n_action_steps` | 50 | keep 50 | inference only; the protocol horizon for every method |
-| `dataset.episodes` | all | `configs/data/libero_<suite>_episodes.json` | one-suite runs (pilot) |
+| `dataset.episodes` | all | `configs/data/libero_<suite>_episodes.json` | one-suite runs (all four suite lists exist: 432 / 454 / 428 / 379 episodes) |
 | `dataset.val_fraction` | 0.01 | 0.01–0.1 | offline action-error monitoring only |
 
 Recommended first runs:
@@ -281,7 +281,7 @@ A sensible default: `joint` with λ cosine from 1.0 to 0.1 over the whole run, `
 | RL horizon | `max_steps` 520 | 1,200 (`action_clip: null`, absolute joints) | as configured |
 | SmolVLA reference | `lerobot/smolvla_libero` | `lerobot/smolvla_robotwin` (trained on all episodes; not the protocol) | `lerobot/smolvla_vlabench` |
 | Baseline recipe (`--policy smolvla`) | full fine-tune, 25k steps, batch 32 | `scripts/train_robotwin_baseline.sh`, 20k steps, batch 64, expert only | 20k steps, batch 32 |
-| Pseudo-labels | LIBERO-Spatial being labelled (`pseudolabels/`) | none yet | none yet |
+| Feature cache | 2 LIBERO-Spatial episodes (smoke); full suites pending | none yet | none yet |
 | Known limits | protocol baseline ~66 % on Spatial (`docs/baselines.md` §3) | Hard setting unavailable; one multi-task policy instead of 50 | — |
 
 Data paths: LIBERO and VLABench are read from the Hugging Face cache. RoboTwin reads
@@ -306,6 +306,25 @@ SFT scalars:
   (`mae_h0_10`, `mae_h10_25`, `mae_h25_50`), arm and gripper MAE, jitter.
 
 A loss that is missing from the logs means its component is switched off.
+
+Also logged:
+- **Every log step:**
+  - `perf/step_s`, `perf/data_wait_s`, `perf/data_stall_frac`, `perf/cache_read_s`,
+    `perf/samples_per_s`;
+  - `grad_clip_rate`;
+  - `moe/entropy/*` and `moe/load_max_over_min/*` (router entropy and per-expert load);
+  - `cot_token_acc` and `cot_trace_len`.
+- **Every `logging.grad_diag_every` steps:** `grad/norm/<loss>` and `grad/cos/<a>__<b>`, the
+  gradient of each weighted loss and the cosine between every pair.
+- **Every validation:**
+  - `val/cot_gain/<phase>`: the action-likelihood gain of the true reasoning trace over a
+    mismatched one, a faithfulness probe;
+  - generated trace samples in `texts.jsonl` and W&B.
+- **At start:** `run_info.json`, also in the W&B config. It holds the git commit and diff
+  hash, pixi.lock hash, seeds, hardware, cache config hash, per-module parameter counts and
+  measured FLOPs.
+
+W&B runs are grouped by `project.group`: `<suite>/<arm>` for ablations.
 
 **Pseudo-label overlay** (`pseudolabels` image; needs `aux.sidecar_root` and labelled episodes
 in the batch):
@@ -382,29 +401,41 @@ pixi run -e dev python scripts/push_to_hub.py results/libero_train/checkpoints/s
 ```
 A failed upload never stops training: it prints a warning with this retry command.
 
-## 9. Auxiliary supervision and the ablation pilot
+## 9. Feature cache and ablations
+
+The final model (the SFT default) needs the feature cache for **every training episode**:
+object tokens are inputs, and episodes without cached data get no object tokens and no
+auxiliary targets. Build the cache for the suites you train on first.
 
 ```bash
-python scripts/benchmark.py labels --suite libero_spatial [--gpu-mem-gb 8]    # pseudo-labels + videos + bootstrap traces
-python scripts/benchmark.py pilot --suite libero_spatial --steps 20000 --dry-run
+pixi run -e dev cache --suite libero_spatial [--gpu-mem-gb 8] [--upload-repo Shirish24/surgical-vla-cache]
+pixi run -e dev ablate --suite libero_spatial --dry-run          # the ladder, 3 seeds each, then evaluation
+pixi run -e dev ablate --suite libero_object                     # other suites: smolvla vs full
+pixi run -e dev compare results/ablations/libero_spatial/smolvla results/ablations/libero_spatial/vision
+pixi run -e dev figures                                          # results.json -> PDFs, LaTeX, docs/baselines.md
 ```
 
-- **Labels:**
-  - every 4th frame, ~25–80 s per episode;
-  - frames are kept in host memory (`--offload-video`, peak 5.3 GiB), so labelling can share
-    the GPU with training under `--gpu-mem-gb`;
-  - sidecar files go in `pseudolabels/`, tracking videos in
-    `results/pseudolabels/videos/<suite>/`;
-  - details in `docs/pseudolabels.md`, quality in `docs/pseudolabel_quality.md`.
-- **Pilot arms:** `baseline`, `vision_aux`, `cot_latent`, `cot_explicit`, `both`, and the MoE
-  variants.
-  - Each arm is trained with identical steps, batch and data (the suite's 432 demonstrations),
-    for seeds 0, 1, 2.
-  - Each is then evaluated on that suite with the protocol settings.
+- **Cache.**
+  - Policy inputs are computed on every frame and targets on every 4th; traces are written
+    afterwards.
+  - Cost: 57 s per episode, about 6.9 GPU-h for LIBERO-Spatial and 27 GPU-h for all four
+    suites (`docs/pseudolabels.md`).
+  - The run is resumable, and the manifest pins every model hash and setting.
+  - A training run refuses a mismatched cache.
+- **Arms** (`configs/ablations/arms.yaml`):
+  - `smolvla`, `oracle_vision`, `aux_only`, `objtok_only`, `frozen_control`, `vision`,
+    `cot_explicit`, `cot_latent`, `cot_curriculum`, `full`, `full_moe_matched`;
+  - all under one protocol (data, steps, batch, LR schedule, seeds, evaluation);
+  - each arm sets every switch.
+  - The predicted effect of each component is recorded in `docs/results_analysis.md` before
+    any run.
 - **Gates**, in order, stopping at the first that fails:
-  1. oracle upper bound (simulator ground truth as targets);
-  2. this pilot;
-  3. transfer to another dataset.
+  1. harness validation;
+  2. cache built and validated on one suite;
+  3. own SmolVLA baselines on all four suites;
+  4. the Spatial ladder, with the oracle arm first (components whose oracle fails are
+     dropped);
+  5. the full model per suite, then LIBERO-Plus, then RoboTwin.
 
 ## 10. Integrity rules
 
@@ -423,7 +454,8 @@ python scripts/benchmark.py pilot --suite libero_spatial --steps 20000 --dry-run
 | Symptom | Cause / fix |
 |---|---|
 | `Instruction 'train' corresponds to no data` | partial dataset cache; download the full dataset or pass `--root` |
-| CUDA out of memory with labelling running | lower `labels --gpu-mem-gb`, or `run.batch_size` with a larger `run.grad_accum` |
+| CUDA out of memory with caching running | lower `cache --gpu-mem-gb`, or `run.batch_size` with a larger `run.grad_accum` |
+| `feature cache does not match the training config` | the message names the field; rebuild the cache or change `aux.expect` deliberately |
 | resume starts at step 0 | `--resume` looks under `run.ckpt_dir`; pass the same `--out` as the original run |
 | a new W&B run on resume | old checkpoint without a run id: add `-- project.wandb_id=<id>` |
 | RL refuses to start (`BenchmarkMismatch`) | config and checkpoint disagree on dims, cameras or normaliser; use that benchmark's own SFT model |

@@ -1,0 +1,260 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 660" width="1600" height="660" font-family="Helvetica, Arial, sans-serif">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#222222"/></marker></defs>
+<rect width="1600" height="660" fill="#ffffff"/>
+<text x="800.0" y="28.0" font-size="16" text-anchor="middle" fill="#222222" font-weight="bold">Fig. 1. SurgicalVLA: SmolVLA with past-only object tokens, explicit-to-latent reasoning and a phase-conditioned MoE action expert</text>
+<path id="e0" class="edge " d="M108.0,130.0 L150.0,130.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e1" class="edge " d="M108.0,215.0 L150.0,215.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e2" class="edge " d="M108.0,312.0 L150.0,312.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e3" class="edge " d="M235.0,362.0 L235.0,380.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e4" class="edge " d="M108.0,445.0 L150.0,445.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e5" class="edge " d="M320.0,130.0 L347.5,130.0 L347.5,190.0 L375.0,190.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e6" class="edge " d="M320.0,215.0 L347.5,215.0 L347.5,327.0 L375.0,327.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e7" class="edge " d="M320.0,400.0 L347.5,400.0 L347.5,379.0 L375.0,379.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e8" class="edge " d="M320.0,445.0 L347.5,445.0 L347.5,400.0 L375.0,400.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e9" class="edge " d="M320.0,552.0 L347.5,552.0 L347.5,444.0 L375.0,444.0" fill="none" stroke="#555555" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+<path id="e10" class="edge " d="M320.0,496.0 L375.0,496.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e11" class="edge " d="M405.0,327.0 L452.5,327.0 L452.5,285.0 L500.0,285.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e12" class="edge " d="M595.0,390.0 L595.0,422.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e13" class="edge " d="M670.0,434.0 L705.0,434.0 L705.0,375.0 L740.0,375.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<text x="711.0" y="408.5" font-size="11" text-anchor="start" fill="#555555">K, V</text>
+<path id="e14" class="edge " d="M808.0,500.0 L808.0,455.0 L840.0,455.0 L840.0,410.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e15" class="edge " d="M940.0,295.0 L958.0,295.0 L958.0,282.0 L976.0,282.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e16" class="edge " d="M1072.0,282.0 L1108.0,282.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e17" class="edge " d="M1143.0,309.0 L1143.0,350.0" fill="none" stroke="#555555" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+<path id="e18" class="edge " d="M1178.0,282.0 L1460.0,282.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e19" class="edge " d="M900.0,180.0 L900.0,62.0 L1225.0,62.0 L1225.0,118.0 L1260.0,118.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<text x="1062.5" y="56.0" font-size="11" text-anchor="middle" fill="#555555">mean of expert outputs</text>
+<path id="e20" class="edge " d="M1410.0,118.0 L1460.0,118.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e21" class="edge " d="M595.0,180.0 L595.0,48.0 L1210.0,48.0 L1210.0,193.0 L1260.0,193.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<text x="902.5" y="42.0" font-size="11" text-anchor="middle" fill="#555555">latent-query outputs</text>
+<path id="e22" class="edge " d="M1410.0,193.0 L1435.0,193.0 L1435.0,200.0 L1460.0,200.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e23" class="edge " d="M1410.0,250.0 L1515.0,250.0 L1515.0,220.0" fill="none" stroke="#555555" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+<path id="e24" class="edge " d="M690.0,285.0 L715.0,285.0 L715.0,160.0 L1195.0,160.0 L1195.0,312.0 L1260.0,312.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<text x="955.0" y="154.0" font-size="11" text-anchor="middle" fill="#555555">CoT-token outputs</text>
+<path id="e25" class="edge " d="M1410.0,312.0 L1435.0,312.0 L1435.0,340.0 L1460.0,340.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e26" class="edge " d="M1410.0,368.0 L1515.0,368.0 L1515.0,360.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<path id="e27" class="edge " d="M910.0,410.0 L910.0,430.0 L1440.0,430.0 L1440.0,440.0 L1460.0,440.0" fill="none" stroke="#222222" stroke-width="1.4" marker-end="url(#ar)"/>
+<text x="1175.0" y="424.0" font-size="11" text-anchor="middle" fill="#555555">router statistics</text>
+<path id="e28" class="edge " d="M1410.0,486.0 L1450.0,486.0 L1450.0,156.0 L1515.0,156.0 L1515.0,140.0" fill="none" stroke="#555555" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+<g id="img" class="node tag-input ia" data-kind="tensor">
+<title>ot · [2, 3, 512, 512] (resize + pad) · Third-person and wrist images, resized with padding to 512 px.</title>
+<rect x="30.0" y="108.0" width="78.0" height="44.0" fill="#eeeeee" stroke="#777777" stroke-width="1.1"/>
+<text x="69.0" y="101.0" font-size="13" text-anchor="middle" fill="#222222" font-family="Menlo, Consolas, monospace">o<tspan baseline-shift="sub" font-size="70%">t</tspan></text>
+<text x="69.0" y="166.0" font-size="11" text-anchor="middle" fill="#555555">2 cameras</text>
+</g>
+<g id="lang" class="node tag-input ia" data-kind="tensor">
+<title>ℓ · [≤ 48] tokens · Task instruction, tokenised (max 48 tokens).</title>
+<rect x="30.0" y="200.0" width="78.0" height="30.0" fill="#eeeeee" stroke="#777777" stroke-width="1.1"/>
+<text x="69.0" y="193.0" font-size="13" text-anchor="middle" fill="#222222" font-family="Menlo, Consolas, monospace">ℓ</text>
+<text x="69.0" y="244.0" font-size="11" text-anchor="middle" fill="#555555">instruction</text>
+</g>
+<g id="frame" class="node tag-input tag-objects ia" data-kind="tensor">
+<title>o(1)t · [H, W, 3] · The same third-person frame, given to the frozen perception. Only frame t is used: object inputs are past-only.</title>
+<rect x="30.0" y="292.0" width="78.0" height="40.0" fill="#eeeeee" stroke="#777777" stroke-width="1.1"/>
+<text x="69.0" y="285.0" font-size="13" text-anchor="middle" fill="#222222" font-family="Menlo, Consolas, monospace">o<tspan baseline-shift="super" font-size="70%">(1)</tspan><tspan baseline-shift="sub" font-size="70%">t</tspan></text>
+<text x="69.0" y="346.0" font-size="11" text-anchor="middle" fill="#555555">current frame</text>
+</g>
+<g id="state" class="node tag-input ia" data-kind="tensor">
+<title>st · [8] LIBERO (pad 32)</title>
+<rect x="30.0" y="432.0" width="78.0" height="26.0" fill="#eeeeee" stroke="#777777" stroke-width="1.1"/>
+<text x="69.0" y="425.0" font-size="13" text-anchor="middle" fill="#222222" font-family="Menlo, Consolas, monospace">s<tspan baseline-shift="sub" font-size="70%">t</tspan></text>
+<text x="69.0" y="472.0" font-size="11" text-anchor="middle" fill="#555555">proprio</text>
+</g>
+<g id="siglip" class="node  ia" data-kind="frozen">
+<title>SigLIP + connector · [2, 3, 512, 512] → [128, 960] · SmolVLM2 vision encoder; 32×32 patches pooled 4× to 64 tokens per image.</title>
+<rect x="150.0" y="90.0" width="170.0" height="80.0" rx="7" fill="#dcebf7" stroke="#3f74a8" stroke-width="1.4"/>
+<text x="235.0" y="117.5" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">SigLIP + connector</text>
+<text x="235.0" y="134.0" font-size="11.5" text-anchor="middle" fill="#555555">pixel shuffle ×4</text>
+<text x="235.0" y="151.0" font-size="11.5" text-anchor="middle" fill="#555555">64 tok / image</text>
+</g>
+<g id="embed" class="node  ia" data-kind="frozen">
+<title>token embedding · [48] → [48, 960]</title>
+<rect x="150.0" y="192.0" width="170.0" height="46.0" rx="7" fill="#dcebf7" stroke="#3f74a8" stroke-width="1.4"/>
+<text x="235.0" y="211.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">token embedding</text>
+<text x="235.0" y="227.5" font-size="11.5" text-anchor="middle" fill="#555555">SmolVLM2</text>
+</g>
+<g id="percep" class="node tag-objects ia" data-kind="frozen">
+<title>frozen perception · frame t → K = 4 objects × ([384] feat, [8] box·centroid·depth·score) · Per frame and without memory: the 3 best instances of the instruction&#x27;s noun phrase plus the end effector. Cached offline for training; computed live at inference (236 ms per chunk).</title>
+<rect x="150.0" y="262.0" width="170.0" height="100.0" rx="7" fill="#dcebf7" stroke="#3f74a8" stroke-width="1.4"/>
+<text x="235.0" y="291.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">frozen perception</text>
+<text x="235.0" y="307.5" font-size="11.5" text-anchor="middle" fill="#555555">SAM 3 (text → masks)</text>
+<text x="235.0" y="324.5" font-size="11.5" text-anchor="middle" fill="#555555">DINOv2-S pooled in mask</text>
+<text x="235.0" y="341.5" font-size="11.5" text-anchor="middle" fill="#555555">Depth Anything V2-S</text>
+</g>
+<g id="objproj" class="node tag-objects tag-trainable ia" data-kind="train">
+<title>object projector · [4, 384+8] → [4, 960]</title>
+<rect x="150.0" y="380.0" width="170.0" height="40.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<text x="235.0" y="396.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">object projector</text>
+<text x="235.0" y="412.5" font-size="11.5" text-anchor="middle" fill="#555555">1 token per object</text>
+</g>
+<g id="sproj" class="node tag-trainable ia" data-kind="train">
+<title>state proj · [32] → [1, 960]</title>
+<rect x="150.0" y="430.0" width="170.0" height="30.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<text x="235.0" y="449.6" font-size="13" text-anchor="middle" fill="#222222">state proj</text>
+</g>
+<g id="lq" class="node tag-cot tag-trainable ia" data-kind="train">
+<title>latent queries q1..4 · [4, 960] · Latent reasoning tokens; their outputs predict the visual embedding of frame t+10.</title>
+<rect x="150.0" y="476.0" width="170.0" height="40.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<text x="235.0" y="492.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">latent queries q<tspan baseline-shift="sub" font-size="70%">1..4</tspan></text>
+<text x="235.0" y="508.5" font-size="11.5" text-anchor="middle" fill="#555555">learned</text>
+</g>
+<g id="cotx" class="node tag-cot ia" data-kind="side">
+<title>explicit CoT text · [≤ 48] tokens · ‘&lt;cot&gt; phase: grasp | object: black bowl | motion: down &lt;/cot&gt;’. Teacher-forced in training (fades out by the curriculum); at inference decoded every 10 chunks, or not at all once the curriculum has ended.</title>
+<rect x="150.0" y="532.0" width="170.0" height="40.0" rx="7" fill="#e6d9f2" stroke="#7a52a0" stroke-width="1.4" stroke-dasharray="5 4"/>
+<text x="235.0" y="548.0" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">explicit CoT text</text>
+<text x="235.0" y="564.5" font-size="11.5" text-anchor="middle" fill="#555555">teacher-forced / decoded</text>
+</g>
+<g id="prefix" class="node  ia" data-kind="tensor">
+<title>prefix · [≈ 233, 960] · Order: images | text | objects (bidirectional) | state | CoT | latent queries (causal).</title>
+<rect x="375.0" y="92.0" width="30.0" height="197.4" fill="#dcebf7" stroke="#3f74a8" stroke-width="1.1"/>
+<text x="411.0" y="194.7" font-size="11" text-anchor="start" fill="#555555" font-family="Menlo, Consolas, monospace">img 128</text>
+<rect x="375.0" y="289.4" width="30.0" height="75.2" fill="#dcebf7" stroke="#3f74a8" stroke-width="1.1"/>
+<text x="411.0" y="331.0" font-size="11" text-anchor="start" fill="#555555" font-family="Menlo, Consolas, monospace">text 48</text>
+<rect x="375.0" y="364.6" width="30.0" height="28.2" fill="#fde3c8" stroke="#d17a22" stroke-width="1.1"/>
+<text x="411.0" y="382.7" font-size="11" text-anchor="start" fill="#555555" font-family="Menlo, Consolas, monospace">obj 4</text>
+<rect x="375.0" y="392.8" width="30.0" height="14.1" fill="#fde3c8" stroke="#d17a22" stroke-width="1.1"/>
+<text x="411.0" y="403.8" font-size="11" text-anchor="start" fill="#555555" font-family="Menlo, Consolas, monospace">s 1</text>
+<rect x="375.0" y="406.9" width="30.0" height="75.2" fill="#e6d9f2" stroke="#7a52a0" stroke-width="1.1"/>
+<text x="411.0" y="448.5" font-size="11" text-anchor="start" fill="#555555" font-family="Menlo, Consolas, monospace">CoT ≤48</text>
+<rect x="375.0" y="482.1" width="30.0" height="28.2" fill="#fde3c8" stroke="#d17a22" stroke-width="1.1"/>
+<text x="411.0" y="500.2" font-size="11" text-anchor="start" fill="#555555" font-family="Menlo, Consolas, monospace">lat 4</text>
+<rect x="375.0" y="510.3" width="30.0" height="51.7" fill="#d9d9d9" stroke="#9a9a9a" stroke-width="1.1"/>
+<text x="411.0" y="540.1" font-size="11" text-anchor="start" fill="#555555" font-family="Menlo, Consolas, monospace">pad</text>
+<text x="390.0" y="85.0" font-size="13" text-anchor="middle" fill="#222222" font-family="Menlo, Consolas, monospace">prefix</text>
+<text x="390.0" y="576.0" font-size="11" text-anchor="middle" fill="#555555">≈ 233 tok</text>
+</g>
+<g id="vlm" class="node  ia" data-kind="frozen">
+<title>SmolVLM2 decoder · [≈ 233, 960] → K, V per layer · Truncated VLM backbone; its per-layer keys and values are cached for the action expert.</title>
+<rect x="504.0" y="176.0" width="190.0" height="210.0" rx="7" fill="#dcebf7" stroke="#3f74a8" stroke-width="1" opacity="0.39999999999999997"/>
+<rect x="508.0" y="172.0" width="190.0" height="210.0" rx="7" fill="#dcebf7" stroke="#3f74a8" stroke-width="1" opacity="0.19999999999999996"/>
+<rect x="500.0" y="180.0" width="190.0" height="210.0" rx="7" fill="#dcebf7" stroke="#3f74a8" stroke-width="1.4"/>
+<text x="595.0" y="264.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">SmolVLM2 decoder</text>
+<text x="595.0" y="280.5" font-size="11.5" text-anchor="middle" fill="#555555">first 16 of 32 layers</text>
+<text x="595.0" y="297.5" font-size="11.5" text-anchor="middle" fill="#555555">d = 960</text>
+<text x="595.0" y="314.5" font-size="11.5" text-anchor="middle" fill="#555555">self-attention + SwiGLU</text>
+<text x="684.0" y="194.0" font-size="10" text-anchor="end" fill="#3f74a8" font-weight="bold">× 16</text>
+</g>
+<g id="kv" class="node  ia" data-kind="frozen">
+<title>prefix KV cache · 16 × [≈ 233, 320] K, V</title>
+<rect x="520.0" y="422.0" width="150.0" height="24.0" fill="#dcebf7" stroke="#3f74a8" stroke-width="1.1"/>
+<text x="595.0" y="415.0" font-size="13" text-anchor="middle" fill="#222222" font-family="Menlo, Consolas, monospace">prefix KV cache</text>
+<text x="595.0" y="460.0" font-size="11" text-anchor="middle" fill="#555555">16 layers</text>
+</g>
+<g id="noisy" class="node  ia" data-kind="tensor">
+<title>xτ, τ · [50, 32] + time · Flow matching: x_τ = τ ε + (1−τ) a, τ ~ Beta(1.5, 1); the expert predicts v = ε − a.</title>
+<rect x="760.0" y="500.0" width="96.0" height="34.0" fill="#eeeeee" stroke="#777777" stroke-width="1.1"/>
+<text x="808.0" y="493.0" font-size="13" text-anchor="middle" fill="#222222" font-family="Menlo, Consolas, monospace">x<tspan baseline-shift="sub" font-size="70%">τ</tspan>, τ</text>
+<text x="808.0" y="548.0" font-size="11" text-anchor="middle" fill="#555555">noisy chunk</text>
+</g>
+<g id="expert" class="node tag-trainable ia" data-kind="train">
+<title>action expert · [50, 720] → [50, 720] · Each layer&#x27;s FFN is a phase-conditioned MoE (router input: token, phase embedding, object context). Variants: upcycled, matched (1× compute), dense (= SmolVLA).</title>
+<rect x="744.0" y="176.0" width="200.0" height="230.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1" opacity="0.39999999999999997"/>
+<rect x="748.0" y="172.0" width="200.0" height="230.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1" opacity="0.19999999999999996"/>
+<rect x="740.0" y="180.0" width="200.0" height="230.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<rect x="888.0" y="186.0" width="46" height="218.0" rx="5" fill="#fde3c8" stroke="#d17a22" stroke-width="1.3"/>
+<text x="911.0" y="276.4" font-size="11" text-anchor="middle" fill="#222222" font-weight="bold">MoE</text>
+<text x="911.0" y="290.8" font-size="9.5" text-anchor="middle" fill="#555555">FFN</text>
+<text x="911.0" y="305.8" font-size="9.5" text-anchor="middle" fill="#555555">top-2/4</text>
+<text x="911.0" y="320.8" font-size="9.5" text-anchor="middle" fill="#555555">+1 shared</text>
+<text x="814.0" y="274.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">action expert</text>
+<text x="814.0" y="290.5" font-size="11.5" text-anchor="middle" fill="#555555">d = 720</text>
+<text x="814.0" y="307.5" font-size="11.5" text-anchor="middle" fill="#555555">cross-attn to prefix KV</text>
+<text x="814.0" y="324.5" font-size="11.5" text-anchor="middle" fill="#555555">+ self-attn over chunk</text>
+<text x="748.0" y="194.0" font-size="10" text-anchor="start" fill="#d17a22" font-weight="bold">× 16</text>
+</g>
+<g id="vout" class="node tag-trainable ia" data-kind="train">
+<title>action out · [50, 720] → [50, 32]</title>
+<rect x="976.0" y="262.0" width="96.0" height="40.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<text x="1024.0" y="286.6" font-size="13" text-anchor="middle" fill="#222222">action out</text>
+</g>
+<g id="v" class="node  ia" data-kind="tensor">
+<title>vθ · [50, 32] (7 used)</title>
+<rect x="1108.0" y="255.0" width="70.0" height="54.0" fill="#eeeeee" stroke="#777777" stroke-width="1.1"/>
+<text x="1143.0" y="248.0" font-size="13" text-anchor="middle" fill="#222222" font-family="Menlo, Consolas, monospace">v<tspan baseline-shift="sub" font-size="70%">θ</tspan></text>
+<text x="1143.0" y="323.0" font-size="11" text-anchor="middle" fill="#555555">[50, 7]</text>
+</g>
+<g id="euler" class="node  ia" data-kind="plain">
+<title>10 Euler · Inference: integrate the ODE from noise to the action chunk at:t+50; RL rollouts use the SDE with a learned noise head.</title>
+<rect x="1100.0" y="350.0" width="86.0" height="44.0" rx="7" fill="#ffffff" stroke="#444444" stroke-width="1.4" stroke-dasharray="5 4"/>
+<text x="1143.0" y="368.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">10 Euler</text>
+<text x="1143.0" y="384.5" font-size="11.5" text-anchor="middle" fill="#555555">steps</text>
+</g>
+<g id="aux" class="node tag-aux tag-trainable ia" data-kind="train">
+<title>aux vision heads · mean expert out [720] → [384], [2], [2], [3] · Training only. Reads the action expert, so the targets shape trainable features while the VLM is frozen.</title>
+<rect x="1260.0" y="90.0" width="150.0" height="56.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<text x="1335.0" y="114.0" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">aux vision heads</text>
+<text x="1335.0" y="130.5" font-size="11.5" text-anchor="middle" fill="#555555">feat · motion · track · rel</text>
+</g>
+<g id="lat" class="node tag-cot tag-trainable ia" data-kind="train">
+<title>latent predictor · [4, 960] → [960]</title>
+<rect x="1260.0" y="170.0" width="150.0" height="46.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<text x="1335.0" y="197.6" font-size="13" text-anchor="middle" fill="#222222">latent predictor</text>
+</g>
+<g id="ema" class="node tag-cot ia" data-kind="frozen">
+<title>EMA target encoder · [960]</title>
+<rect x="1260.0" y="230.0" width="150.0" height="40.0" rx="7" fill="#dcebf7" stroke="#3f74a8" stroke-width="1.4"/>
+<text x="1335.0" y="246.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">EMA target encoder</text>
+<text x="1335.0" y="262.5" font-size="11.5" text-anchor="middle" fill="#555555">frame t+10</text>
+</g>
+<g id="cothead" class="node tag-cot tag-trainable ia" data-kind="train">
+<title>CoT LM head · [960] → vocab 49 280</title>
+<rect x="1260.0" y="292.0" width="150.0" height="40.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<text x="1335.0" y="316.6" font-size="13" text-anchor="middle" fill="#222222">CoT LM head</text>
+</g>
+<g id="phase" class="node tag-trainable ia" data-kind="train">
+<title>phase head</title>
+<rect x="1260.0" y="348.0" width="150.0" height="40.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<text x="1335.0" y="364.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">phase head</text>
+<text x="1335.0" y="380.5" font-size="11.5" text-anchor="middle" fill="#555555">4 phases</text>
+</g>
+<g id="l_fm" class="node tag-loss ia" data-kind="loss">
+<title>ℒFM</title>
+<rect x="1460.0" y="262.0" width="110.0" height="40.0" rx="7" fill="#f7d4d4" stroke="#b33a3a" stroke-width="1.4"/>
+<text x="1515.0" y="278.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">ℒ<tspan baseline-shift="sub" font-size="70%">FM</tspan></text>
+<text x="1515.0" y="294.5" font-size="11.5" text-anchor="middle" fill="#555555">‖v<tspan baseline-shift="sub" font-size="70%">θ</tspan> − (ε − a)‖²</text>
+</g>
+<g id="l_aux" class="node tag-loss tag-aux ia" data-kind="loss">
+<title>ℒaux</title>
+<rect x="1460.0" y="96.0" width="110.0" height="44.0" rx="7" fill="#f7d4d4" stroke="#b33a3a" stroke-width="1.4"/>
+<text x="1515.0" y="114.0" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">ℒ<tspan baseline-shift="sub" font-size="70%">aux</tspan></text>
+<text x="1515.0" y="130.5" font-size="11.5" text-anchor="middle" fill="#555555">conf-weighted</text>
+</g>
+<g id="l_lat" class="node tag-loss tag-cot ia" data-kind="loss">
+<title>ℒlatent</title>
+<rect x="1460.0" y="180.0" width="110.0" height="40.0" rx="7" fill="#f7d4d4" stroke="#b33a3a" stroke-width="1.4"/>
+<text x="1515.0" y="196.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">ℒ<tspan baseline-shift="sub" font-size="70%">latent</tspan></text>
+<text x="1515.0" y="212.5" font-size="11.5" text-anchor="middle" fill="#555555">cos(·, sg[·])</text>
+</g>
+<g id="l_cot" class="node tag-loss tag-cot ia" data-kind="loss">
+<title>ℒCoT · ℒphase</title>
+<rect x="1460.0" y="320.0" width="110.0" height="40.0" rx="7" fill="#f7d4d4" stroke="#b33a3a" stroke-width="1.4"/>
+<text x="1515.0" y="336.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">ℒ<tspan baseline-shift="sub" font-size="70%">CoT</tspan> · ℒ<tspan baseline-shift="sub" font-size="70%">phase</tspan></text>
+<text x="1515.0" y="352.5" font-size="11.5" text-anchor="middle" fill="#555555">cross-entropy</text>
+</g>
+<g id="l_moe" class="node tag-loss ia" data-kind="loss">
+<title>ℒbalance</title>
+<rect x="1460.0" y="420.0" width="110.0" height="40.0" rx="7" fill="#f7d4d4" stroke="#b33a3a" stroke-width="1.4"/>
+<text x="1515.0" y="436.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">ℒ<tspan baseline-shift="sub" font-size="70%">balance</tspan></text>
+<text x="1515.0" y="452.5" font-size="11.5" text-anchor="middle" fill="#555555">Switch</text>
+</g>
+<g id="targets" class="node tag-aux tag-cot ia" data-kind="target">
+<title>feature cache (offline) · Parquet shards keyed (episode, frame) · Targets may use the whole episode; they are used only in losses. Inputs (object tokens) are past-only.</title>
+<rect x="1260.0" y="450.0" width="150.0" height="72.0" rx="7" fill="#d3ebd3" stroke="#4b8b4b" stroke-width="1.4"/>
+<text x="1335.0" y="473.6" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">feature cache (offline)</text>
+<text x="1335.0" y="490.0" font-size="11.5" text-anchor="middle" fill="#555555">SAM 3 video tracks · TAPNext++</text>
+<text x="1335.0" y="507.0" font-size="11.5" text-anchor="middle" fill="#555555">phases · CoT traces</text>
+</g>
+<rect x="20" y="636" width="14" height="12" fill="#dcebf7" stroke="#3f74a8"/>
+<text x="40.0" y="646.0" font-size="11" text-anchor="start" fill="#555555">frozen</text>
+<rect x="93.0" y="636" width="14" height="12" fill="#fde3c8" stroke="#d17a22"/>
+<text x="113.0" y="646.0" font-size="11" text-anchor="start" fill="#555555">trainable</text>
+<rect x="185.5" y="636" width="14" height="12" fill="#eeeeee" stroke="#777777"/>
+<text x="205.5" y="646.0" font-size="11" text-anchor="start" fill="#555555">tensor</text>
+<rect x="258.5" y="636" width="14" height="12" fill="#e6d9f2" stroke="#7a52a0"/>
+<text x="278.5" y="646.0" font-size="11" text-anchor="start" fill="#555555">optional text</text>
+<rect x="377.0" y="636" width="14" height="12" fill="#d3ebd3" stroke="#4b8b4b"/>
+<text x="397.0" y="646.0" font-size="11" text-anchor="start" fill="#555555">offline cache</text>
+<rect x="495.5" y="636" width="14" height="12" fill="#f7d4d4" stroke="#b33a3a"/>
+<text x="515.5" y="646.0" font-size="11" text-anchor="start" fill="#555555">loss</text>
+<text x="800.0" y="624.0" font-size="12" text-anchor="middle" fill="#555555" font-style="italic">Blue frozen, orange trained. Perception and the auxiliary/latent/CoT heads never change the frozen VLM; their losses train the action expert, the object projector and the latent queries.</text>
+</svg>

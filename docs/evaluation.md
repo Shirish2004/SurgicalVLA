@@ -102,7 +102,24 @@ Results table template (one per benchmark):
 | + RL (sequential) | `...-rl-sequential-...` | | | | | | |
 | + RL (joint) | `...-rl-joint-...` | | | | | | |
 
-## 5. Offline checks (no simulator)
+## 5. Per-episode records, paired comparisons, probes
+
+- **Per-episode records.** `episodes.jsonl` (written by the aggregation) has one row per
+  episode: suite, seed, task, **init state** (episode `i` of a task runs init state `i`),
+  success, length (`episode_lengths.json`, recorded by `scripts/lerobot_eval.py`) and outcome.
+- **Paired comparison.** `pixi run -e dev compare <A> <B>` matches episodes on (suite, seed,
+  task, init state) and reports the difference B − A with a cluster-bootstrap CI and
+  McNemar's exact p. Use this for every claim that a component helps.
+- **Object-token usage.** Evaluate the same checkpoint with
+  `-- --policy.object_token_ablation=zero` and `=shuffle`; the drop in success measures how much
+  the policy relies on the object tokens.
+- **Live perception.** Policies with `object_input` compute their object tokens from the
+  current camera frame inside `lerobot-eval` (`attach_live_perception`). This is the same code
+  as the training cache, and it adds 236 ms per action chunk.
+- **Videos.** LeRobot renders the first episodes of each task to `<out>/<suite>/seed*/videos/`.
+  `eval_info.json` lists each video with its episode's success.
+
+## 6. Offline checks (no simulator)
 
 These are useful during development, but they are not benchmark results:
 
@@ -114,7 +131,7 @@ These are useful during development, but they are not benchmark results:
   only.
 - **Pseudo-label quality** against simulator ground truth: `docs/pseudolabel_quality.md`.
 
-## 6. Checklist before quoting a number
+## 7. Checklist before quoting a number
 
 - [ ] The last checkpoint of a budget fixed in advance, not chosen by success.
 - [ ] Protocol settings: canonical image, all init states, 3 seeds, `n_action_steps` 50
@@ -122,4 +139,5 @@ These are useful during development, but they are not benchmark results:
 - [ ] Same data and the same budget as the baseline it is compared with.
 - [ ] `summary.json` with CIs; all seeds reported.
 - [ ] RL models: forgetting reported on the suites not trained by RL.
+- [ ] Component claims: paired comparison on identical starting states, with CI and p.
 - [ ] Deviations (RoboTwin Easy only, multi-task policy) stated.

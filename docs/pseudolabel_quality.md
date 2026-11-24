@@ -1,5 +1,11 @@
 # Pseudo-label quality against simulator ground truth
 
+*Status (2026-11-24): the numbers below validate the **targets**, which the current cache (v3)
+computes with the same code as when they were measured. The **past-only object inputs** (SAM 3
+image mode, per frame) are new: their agreement with simulator ground truth (candidate recall
+of the true target, box IoU, depth rank correlation) is not measured yet. That validation runs
+on held-out training demonstrations of one suite before the cache is built for all four.*
+
 Simulator ground truth is used here **only to measure** pseudo-label quality, never as a
 training signal.
 

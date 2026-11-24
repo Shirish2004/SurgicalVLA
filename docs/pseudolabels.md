@@ -1,9 +1,59 @@
-# Pseudo-label pipeline
+# Feature and pseudo-label cache
 
-`scripts/make_pseudolabels.py` produces label-free auxiliary targets offline from raw
-demonstrations with frozen models, and stores them as a sidecar next to the dataset
-(`src/surgicalvla/pseudolabels/`). No simulator state is read; the only dataset-specific
-input is which action dimensions command grippers (`--gripper-dims`).
+`scripts/make_pseudolabels.py` (`pixi run -e dev cache --suite <suite>`) produces, offline and
+with frozen models only, two kinds of data per LeRobot episode:
+
+- **Policy inputs.** Object tokens on every frame (`--input-stride 1`). They are
+  **past-only**: computed from that frame alone (`surgicalvla/perception/object_inputs.py`),
+  exactly as the policy computes them live at evaluation.
+- **Training targets.** Every 4th frame (`--stride 4`). They may use the whole episode and
+  enter only losses.
+
+No simulator state is read; the only dataset-specific input is which action dimensions
+command grippers (`--gripper-dims`).
+
+## Storage (`src/surgicalvla/pseudolabels/cache.py`)
+
+Layout:
+
+```
+pseudolabels/<dataset>/<cache-name>/manifest.json
+pseudolabels/<dataset>/<cache-name>/shards/{frames,episodes,cot}-NNNNN.parquet
+```
+
+- **Rows.** One row per frame, keyed by (episode, frame) as in the LeRobot dataset. Masks are
+  stored as full-resolution RLE and features as fp16. Raw frames are never stored.
+- **Manifest.**
+  - module ids, Hub revisions and weight SHA-256 (read from the Hugging Face cache blob names);
+  - the TAPNext++ checkpoint hash;
+  - prompts, thresholds, strides, camera, causal mode;
+  - library versions and git commit;
+  - creation time;
+  - a config hash over everything that changes the values.
+- **Mismatch.** A training run states what it expects (`aux.expect`, plus what the model
+  needs). A mismatched cache is refused with the differing field named, e.g.
+  `labeler.stride: training config expects 4, cache has 2`.
+- **Integrity.** Shards are written atomically and recorded with a SHA-256 checksum. A
+  damaged shard is detected on read, and an interrupted run resumes after the last complete
+  shard.
+- **Bounded disk.** With `--upload-repo` (a private Hub dataset), finished shards are
+  uploaded, and uploaded shards are evicted locally, least recently used first, beyond
+  `--max-gb`. Readers download evicted shards on demand.
+- **Augmentation.** None: the training data has no geometric augmentation (tested), and the
+  policy's resize-with-padding is deterministic and identical in training and evaluation, so
+  cached boxes, masks and tracks stay aligned with the images.
+
+### Inputs per frame (K = 4 objects: 3 phrase candidates + end effector; plus the grid control)
+
+| Column | Shape | Content |
+|---|---|---|
+| `in_obj_feat` | (4, 384) fp16 | DINOv2-S patch features pooled in each SAM 3 instance mask |
+| `in_obj_pose` | (4, 8) fp16 | box xyxy, mask centroid, median relative depth, SAM 3 score |
+| `in_obj_valid` | (4,) bool | instance present (score ≥ 0.15; target candidates not covered by the end effector; duplicates merged) |
+| `in_grid_feat`, `in_grid_pose` | (4, 384), (4, 8) | control: the same encoders pooled over a fixed 2×2 grid |
+
+SAM 3 runs in image mode with the image features computed once and shared by the prompts
+(0.22 s per frame instead of 0.65 s, identical scores).
 
 ```bash
 pixi run -e dev python scripts/make_pseudolabels.py --repo-id lerobot/libero \
@@ -24,9 +74,8 @@ pixi run -e dev python scripts/make_pseudolabels.py --repo-id lerobot/libero \
 | point tracks | TAPNext++ on a grid inside the first confident target mask | per-point visibility |
 | phase boundaries | gripper command events + arm-speed minima | step sharpness / minimum depth |
 
-Storage: one compressed `.npz` per episode with a manifest (resumable, atomic writes, disk cap
-`--max-gb`, eviction only of episodes already pushed to the Hub). Frames are read with
-`StreamingLeRobotDataset`; episodes may arrive interleaved and are assembled by frame count.
+Frames are read with `StreamingLeRobotDataset`; episodes may arrive interleaved and are
+assembled by frame count.
 
 ## Design findings from development (LIBERO)
 
@@ -40,7 +89,24 @@ Storage: one compressed `.npz` per episode with a manifest (resumable, atomic wr
   including one where the text score alone preferred a different bowl.
 - The rule-based parser must keep coordinated adjectives ("yellow and white mug").
 
-## Cost (baseline: 3 LIBERO episodes 84, 169, 1608; RTX A4500)
+## Cost
+
+Current cache (inputs on every frame + targets every 4th frame), measured on 2 LIBERO-Spatial
+episodes (1261, 1262), RTX A4500:
+
+| | Value |
+|---|---|
+| time per episode | 57 s: inputs 30 s, targets 24 s, point tracks 0.8 s |
+| per 1,000 episodes | **15.9 GPU-hours, 0.75 GB disk** |
+| peak VRAM | 7.3 GiB (with `--offload-video`) |
+| LIBERO-Spatial (432 episodes) | ≈ 6.9 GPU-h, 0.33 GB |
+| all four LIBERO suites (1,693) | ≈ 27 GPU-h, 1.3 GB |
+
+The pipeline's hyperparameters (prompts, thresholds, stride) are frozen at the values in the
+manifest. They were chosen on 3 LIBERO training demonstrations (84, 169, 1608: Goal, Goal,
+Spatial), never on evaluation episodes, and are applied unchanged to every suite and benchmark.
+
+### Earlier measurement (targets only, stride 2, 3 episodes 84, 169, 1608)
 
 | | Value |
 |---|---|

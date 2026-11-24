@@ -81,13 +81,17 @@ says whether a user normally touches the key.
 | Key | Default | What it is for | Change? |
 |---|---|---|---|
 | `moe_variant` | `upcycled` | action-expert FFN: `upcycled` (3× dense compute), `matched` (1× compute), `dense`, `dense_param_matched` | ablations |
+| `object_input` | `objects` | object tokens from past-only perception: `none`, `objects` (3 phrase candidates + end effector), `grid` (control: same encoders, 2×2 grid). Sets `num_objects`, `obj_pose_dim` (8), `obj_sam_feat_dim` and the per-object token layout | ablations |
+| `obj_candidates` | 3 | target-phrase instances per frame (must match the cache) | no |
+| `aux_source` | `expert` | what the auxiliary heads read: `expert` (trainable with a frozen VLM) or `prefix` | no |
+| `object_token_ablation` | `none` | evaluation probe: `zero` or `shuffle` the object tokens (`-- --policy.object_token_ablation=zero`) | evaluation only |
 | `num_experts`, `num_shared_experts`, `moe_top_k` | 4, 1, 2 | MoE shape | no |
 | `moe_aux_loss_weight` | 0.01 | Switch load-balancing loss | no |
-| `aux_vision` | false | auxiliary vision heads trained on pseudo-labels (needs `aux.sidecar_root`) | pilot arm `vision_aux` |
-| `latent_cot` | false | latent reasoning tokens predicting a future visual embedding | pilot arm `cot_latent` |
-| `use_cot` | true | explicit CoT text in the prefix; trains only with `aux.cot_traces: true` | set false when there are no traces |
+| `aux_vision` | true | auxiliary vision heads trained on pseudo-labels (needs the cache) | arms |
+| `latent_cot` | true | latent reasoning tokens predicting a future visual embedding | arms |
+| `use_cot` | true | explicit CoT text in the prefix; trains only with `aux.cot_traces: true` | arms |
 | `cot_max_tokens`, `cot_refresh_interval` | 48, 10 | CoT length and refresh interval (chunks) at inference | no |
-| `cot_curriculum_steps` | 0 | >0: probability of explicit text decays to 0 over these steps (latent stays) | curriculum arm |
+| `cot_curriculum_steps` | 25000 | >0: probability of explicit text decays to 0 over these steps (latent stays); after it ends, inference decodes no explicit text | keep at half of `run.steps` |
 | `phase_loss_weight` | 0.1 | phase classification from pseudo phase segments | no |
 | `pose_aux_loss_weight`, `num_object_tokens`, `num_objects`, `obj_tracker_mode` | — | object-centric 6-D tokens; off without labels | no |
 | `expert_cross_attn_vlm_layers` | 0 | must equal `num_vlm_layers` (0 = all) | no |
@@ -100,13 +104,16 @@ Further `SmolVLAMoEConfig` fields can be set here too: `aux_feat_weight`, `aux_m
 
 The `moe:` section applies only to the legacy `surgical` policy and is ignored by `smolvla_moe`.
 
-### `aux:` pseudo-label sidecar
+### `aux:` feature cache
 
 | Key | Default | What it is for | Change? |
 |---|---|---|---|
-| `sidecar_root` | `pseudolabels` (others: null) | where `scripts/make_pseudolabels.py` wrote labels. Used as targets only when a switch needs them; always used to draw overlays | set once labels exist |
+| `sidecar_root` | `pseudolabels` | cache root (`scripts/make_pseudolabels.py`); needed by every switch that uses cached data, and drawn on logged frames | no |
+| `cache_name` | null | null = the newest cache of the dataset; or a name (e.g. `oracle`) | oracle arm |
+| `upload_repo` | null | Hub dataset holding shards evicted from local disk | when disk is short |
+| `expect` | `{labeler: {stride: 4, input_stride: 1, causal_inputs: true}}` | manifest fields the run requires; a mismatch stops the run and names the field. The candidate count and causal mode are added automatically from the model config | when the cache settings change |
 | `track_horizon` | 5 | labelled frames ahead for the point-track target and the overlay trail | no |
-| `cot_traces` | false | feed explicit reasoning traces (`scripts/make_cot_traces.py`) | pilot arm `cot_explicit` |
+| `cot_traces` | true | feed explicit reasoning traces from the cache | arms |
 
 ### `logging:` images
 
@@ -114,6 +121,7 @@ The `moe:` section applies only to the legacy `surgical` policy and is ignored b
 |---|---|---|---|
 | `enable_visual_logging` | true | camera frames, action plots, MoE heatmap, pseudo-label overlays | no |
 | `log_every_n_steps` | 400 | image interval | no |
+| `grad_diag_every` | 400 | per-loss gradient norms and pairwise cosines (one extra forward; 0 = off) | 0 for speed |
 | `log_dir` | `logs` | TensorBoard sub-directory | no |
 
 ### `hub:` model upload

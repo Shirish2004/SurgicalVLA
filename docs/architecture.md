@@ -1,62 +1,74 @@
 # Architecture
 
-SurgicalVLA is SmolVLA (SmolVLM2-500M truncated to 16 layers + a flow-matching action expert)
-with switchable additions. Every addition is a config flag in `smolvla_moe` (per-benchmark SFT
-configs, `configs/benchmarks/<benchmark>/sft.yaml`) and stays **experimental** until its
-ablation passes (`docs/limitations.md`). With all flags off the model reproduces
-`lerobot/smolvla_base` at initialisation (rel. action error < 2e-3, tested on the real weights).
+![Fig. 1](fig/surgicalvla_arch.svg)
 
-```
-images ─ SigLIP + connector ─┐
-instruction tokens ──────────┤ bidirectional block
-(object tokens, optional) ───┘
-state ───────────────────────── causal
-explicit CoT text (optional) ── causal, decoded by the LM head at inference every N chunks
-latent CoT queries (optional) ─ causal, K learned tokens, no decoding
-        │  SmolVLM2 layers 0..15 → prefix KV cache
-        ▼
-noisy action chunk + flow time ─ action expert (16 layers, cross-attends to the prefix)
-                                  FFN = dense | MoE (variant below)
-                                  └─ velocity → Euler (SFT / eval) or SDE + noise head (RL)
+Interactive version (hover for shapes, step through the forward pass): [`fig/surgicalvla_arch.html`](fig/surgicalvla_arch.html).
+The figure is generated from [`fig/fig_surgicalvla.py`](fig/fig_surgicalvla.py) with the dl-paper-diagrams renderer.
 
-training-only heads on the pooled prefix: auxiliary vision targets, latent-CoT predictor, phase
-```
+SurgicalVLA is SmolVLA (SmolVLM2-500M truncated to 16 of 32 layers, plus a flow-matching action
+expert) with switchable additions. **The final model runs with object tokens, auxiliary vision
+supervision, explicit-to-latent reasoning and the MoE action expert ON**: these are the defaults
+of every `configs/benchmarks/<benchmark>/sft.yaml`. Every addition keeps a config flag for the
+ablations (`configs/ablations/arms.yaml`). With every flag off and `moe_variant: dense`, the
+model is SmolVLA and reproduces `lerobot/smolvla_base` at initialisation (relative action error
+< 2e-3, tested on the real weights). Components stay **experimental** until their ablation
+passes (`docs/limitations.md`, `docs/results_analysis.md`).
 
 ## Components
 
-| Flag | What it adds | Supervision | Inference cost |
-|---|---|---|---|
-| `moe_variant` | action-expert FFN: `upcycled`, `matched`, `dense`, `dense_param_matched` | flow matching + Switch load balancing | see table below |
-| `aux_vision` | heads predicting the target's DINOv2 feature, motion, point-track displacement and gripper offset from the pooled VLM prefix | label-free pseudo-labels (`docs/pseudolabels.md`), weighted by their confidence | none (training only) |
-| `latent_cot` | `latent_cot_tokens` learned queries appended to the prefix; their mean output predicts the embedding of the frame `latent_cot_horizon` ahead | EMA target encoder (the vision encoder itself when frozen), stop-gradient | K prefix tokens |
-| `use_cot` + `aux.cot_traces` | explicit reasoning text in the prefix, CE-trained, decoded at inference | traces written from pseudo-labels, filtered by action-likelihood gain (`scripts/make_cot_traces.py`) | up to `cot_max_tokens` VLM passes every `cot_refresh_interval` chunks |
-| `cot_curriculum_steps` | probability of feeding explicit text decays 1 → 0; latent tokens remain | — | as `latent_cot` |
-| phase head | phase from the CoT phase token, else from pooled perception | pseudo phase segments (gripper events + speed minima) | none |
-| object tokens / pose head | object-centric 6-D tokens and pose auxiliary loss | **none yet** (no labels; off by default) | — |
-| ReinFlow noise head | learned per-step σ for SDE rollouts and exact transition log-probs | RL only | none at evaluation (ODE) |
+| Flag (`smolvla_moe.*`) | Final default | What it adds | Supervision / source | Inference cost |
+|---|---|---|---|---|
+| `object_input` | `objects` | one token per object: the 3 best instances of the instruction's noun phrase + the end effector. Each token comes from a DINOv2-S feature pooled in the SAM 3 mask, plus box, centroid, relative depth and score. `grid` is the control (same encoders, 2×2 grid, no objects) | frozen perception on the **current frame only** (past-only); cached for training, computed live at inference | 236 ms per action chunk (SAM 3 + DINOv2 + Depth Anything) |
+| `aux_vision` (+ `aux_source`) | on (`expert`) | heads predicting the target's DINOv2 feature, motion, point-track displacement and gripper offset | label-free pseudo-labels from the cache (may use the whole episode), confidence-weighted | none (training only) |
+| `latent_cot` | on | 4 learned queries appended to the prefix; their mean output predicts the embedding of frame t+10 | EMA target encoder, stop-gradient | 4 prefix tokens |
+| `use_cot` + `aux.cot_traces` | on | explicit reasoning text in the prefix, CE-trained | traces written from pseudo-labels, bootstrap round 1 unfiltered (`scripts/make_cot_traces.py`) | 1.07 s per decode every 10 chunks, but **none once the curriculum has finished** |
+| `cot_curriculum_steps` | half of `run.steps` | probability of feeding explicit text decays 1 → 0; after it ends, inference is latent-only | — | as `latent_cot` |
+| `moe_variant` | `upcycled` | action-expert FFN: `upcycled` (1 shared + top-2 of 4, 3× compute), `matched` (1× compute), `dense` (= SmolVLA), `dense_param_matched` | flow matching + Switch load balancing | see below |
+| phase head | on with any cache | phase from the CoT phase token, else from pooled perception; feeds the MoE router | pseudo phase segments (gripper events + speed minima) | none |
+| `object_token_ablation` | `none` | evaluation probe: `zero` hides the object tokens, `shuffle` permutes their slots | — | — |
+| ReinFlow noise head | RL only | learned per-step σ for SDE rollouts and exact transition log-probs | RL | none at evaluation (ODE) |
 
-Design constraint: every auxiliary target is produced offline by frozen models from raw
-demonstrations; simulator ground truth is used only to validate pseudo-labels and for oracle
-ablations. The deployed policy runs no tracker.
+Design constraints:
+- **Label-free.** Every input feature and auxiliary target comes from frozen models run
+  offline on raw demonstrations. Simulator ground truth is used only to validate
+  pseudo-labels and for the oracle arm.
+- **Past-only inputs.** Object inputs depend on the current frame alone. A test runs the
+  extractor on real frames with the future replaced and gets identical features. The reader
+  never returns an input from a later frame. Targets may use the future; they only enter
+  losses.
+- **Frozen VLM.** The VLM's 350 M parameters stay frozen. Auxiliary targets therefore read the
+  action expert (`aux_source: expert`), where they can change features the policy acts on. A
+  VLM change (LoRA) is a separate study (`docs/limitations.md`).
 
-## MoE variants (measured, `scripts/smoke_full_arch.py`)
+## Cost (measured, `scripts/smoke_full_arch.py`, RTX A4500, batch 2, every component on)
 
-All components on, warm-started from `lerobot/smolvla_libero`, batch 2, RTX A4500.
+| Variant | Params (trainable) | Train step | Peak VRAM (train) | Chunk latency | + live perception |
+|---|---|---|---|---|---|
+| `dense` | 607 M (452 M) | 0.21 s | 5.5 GiB | 117 ms | 236 ms, peak 5.9 GiB |
+| `upcycled` (final) | 890 M (735 M) | 0.25 s | 7.4 GiB | 242 ms | 236 ms, peak 7.6 GiB |
+| `matched` | 654 M (499 M) | 0.27 s | 5.7 GiB | 241 ms | 238 ms, peak 6.2 GiB |
 
-| Variant | Experts | Active FFN compute | Params | Train step | Peak VRAM | Chunk latency |
-|---|---|---|---|---|---|---|
-| `upcycled` | 1 shared + top-2 of 4, full width | 3 × dense | 893 M | 0.25 s | 7.3 GiB | 252 ms |
-| `matched` | width dense/3, random row-slices | 1 × dense | 657 M | 0.26 s | 5.6 GiB | 258 ms |
-| `dense` | none | 1 × dense | 609 M | 0.21 s | 5.5 GiB | 122 ms |
-| `dense_param_matched` | one FFN widened to the MoE's total params | 5 × dense | 892 M | 0.22 s | 7.9 GiB | 124 ms |
+Measured forward cost: 0.96 TFLOP per sample (`run_info.json`). The MoE latency overhead at
+equal FLOPs comes from the per-expert dispatch loop; grouped expert matmuls would remove it.
 
-`matched` vs `dense` is the compute-matched comparison; `upcycled` vs `dense_param_matched` the
-parameter-matched one. The MoE latency overhead at equal FLOPs comes from the per-expert
-dispatch loop, not arithmetic; grouped expert matmuls would remove it.
+## Data flow
 
-## Training data flow
+**Offline cache.** `scripts/make_pseudolabels.py` writes `pseudolabels/<dataset>/<cache>/`
+(`docs/pseudolabels.md`):
+- per-frame inputs;
+- per-4th-frame targets;
+- traces;
+- a manifest with model hashes and settings.
 
-`scripts/train.py` → `Trainer._prep`: processor → (latent CoT) split the future frame off the
-observation history → keep the current frame → attach `aux.*` targets, pseudo phase ids and
-tokenised traces from the sidecar store (`pseudolabels.reader.SidecarTargets`) by
-`(episode_index, frame_index)`. After each optimiser step the latent-CoT EMA encoder advances.
+**Training.** `scripts/train.py` → `Trainer._prep`:
+1. processor;
+2. (latent CoT) split the future frame from the observation history;
+3. keep the current frame;
+4. attach `aux.*` targets, phase ids, tokenised traces and `obj_*` inputs from the cache
+   (`pseudolabels.reader.SidecarTargets`), by `(episode_index, frame_index)`.
+
+The reader refuses a cache whose manifest differs from what the config expects (`aux.expect`).
+
+**Evaluation.** `scripts/lerobot_eval.py` attaches the same perception to the policy
+(`attach_live_perception`), which computes the object tokens from the current camera frame and
+`batch["task"]`.

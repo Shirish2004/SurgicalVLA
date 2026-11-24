@@ -60,17 +60,23 @@ def iter_episodes(args, episodes: list[int], lengths: dict[int, int]):
     camera = args.camera or ds.meta.camera_keys[0]
     buffers: dict[int, dict[int, dict]] = {}
 
+    def compact(item: dict) -> dict:
+        # keep only what labelling needs: the labelled camera as uint8 (other cameras and float
+        # copies of large frames would exhaust host memory while episodes are buffered)
+        return {"frame": (item[camera].permute(1, 2, 0).numpy() * 255).round().astype(np.uint8),
+                "state": item["observation.state"].numpy(),
+                "action": item["action"].numpy().reshape(-1, item["action"].shape[-1])[0],
+                "task": str(item.get("task", ""))}
+
     def assemble(ep: int):
         buf = buffers.pop(ep)
         items = [buf[k] for k in sorted(buf)]
-        frames = np.stack([(b[camera].permute(1, 2, 0).numpy() * 255).round().astype(np.uint8) for b in items])
-        state = np.stack([b["observation.state"].numpy() for b in items])
-        action = np.stack([b["action"].numpy().reshape(-1, b["action"].shape[-1])[0] for b in items])
-        return ep, frames, state, action, str(items[0].get("task", ""))
+        return (ep, np.stack([b["frame"] for b in items]), np.stack([b["state"] for b in items]),
+                np.stack([b["action"] for b in items]), items[0]["task"])
 
     for item in ds:
         ep, fi = int(item["episode_index"]), int(item["frame_index"])
-        buffers.setdefault(ep, {})[fi] = item
+        buffers.setdefault(ep, {})[fi] = compact(item)
         if len(buffers[ep]) == lengths[ep]:
             yield assemble(ep)
     for ep in list(buffers):  # incomplete episodes (should not happen); label what arrived

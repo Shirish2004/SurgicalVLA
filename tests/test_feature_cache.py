@@ -134,3 +134,30 @@ def test_training_data_has_no_geometric_augmentation(monkeypatch):
     monkeypatch.setattr(ds, "resolve_camera_map", lambda m, c: None)
     ds.build_dataset("org/ds", config=None)
     assert seen.get("image_transforms") is None
+
+
+def test_episode_reader_keeps_only_the_labelled_camera_as_uint8(monkeypatch):
+    import types
+
+    import lerobot.datasets.streaming_dataset as sd
+
+    from scripts.make_pseudolabels import iter_episodes
+
+    def item(ep, f):
+        return {"episode_index": torch.tensor(ep), "frame_index": torch.tensor(f), "task": "t",
+                "cam_a": torch.rand(3, 8, 8), "cam_b": torch.rand(3, 8, 8),
+                "observation.state": torch.zeros(2), "action": torch.zeros(3)}
+
+    class Fake:
+        def __init__(self, *a, **k):
+            self.meta = types.SimpleNamespace(camera_keys=["cam_a", "cam_b"])
+
+        def __iter__(self):  # two episodes, interleaved
+            return iter([item(0, 0), item(1, 0), item(0, 1), item(1, 1)])
+
+    monkeypatch.setattr(sd, "StreamingLeRobotDataset", Fake)
+    args = types.SimpleNamespace(repo_id="x", root="r", revision=None, camera=None)
+    out = list(iter_episodes(args, [0, 1], {0: 2, 1: 2}))
+    assert [o[0] for o in out] == [0, 1]
+    frames = out[0][1]
+    assert frames.dtype == np.uint8 and frames.shape == (2, 8, 8, 3)

@@ -105,18 +105,38 @@ def resolve_resume_dir(resume_arg: str | bool | None, output_dir: str) -> str | 
     return resume_arg if isinstance(resume_arg, str) else None
 
 
-def build_aux_targets(cfg: dict, config, repo_id: str, tokenizer=None):
-    """Sidecar pseudo-label reader when the config enables auxiliary targets (``aux.sidecar_root``)."""
+def cache_expectations(cfg: dict, config) -> dict:
+    """Manifest fields the run requires: ``aux.expect`` from the config, plus what the model needs."""
     aux = cfg.get("aux") or {}
-    if not aux.get("sidecar_root") or not (getattr(config, "aux_vision", False) or aux.get("cot_traces")):
+    expect = {"labeler": dict((aux.get("expect") or {}).get("labeler") or {})}
+    expect.update({k: v for k, v in (aux.get("expect") or {}).items() if k != "labeler"})
+    if getattr(config, "object_input", "none") != "none":
+        expect["labeler"]["causal_inputs"] = True
+        expect["labeler"].setdefault("object_inputs", {})["num_candidates"] = config.obj_candidates
+    return expect
+
+
+def build_aux_targets(cfg: dict, config, repo_id: str, tokenizer=None):
+    """Cache reader when a switch needs cached data (auxiliary targets, traces or object inputs)."""
+    aux = cfg.get("aux") or {}
+    needs = getattr(config, "aux_vision", False) or aux.get("cot_traces") or getattr(config, "object_input", "none") != "none"
+    if not needs:
         return None
+    if not aux.get("sidecar_root"):
+        raise ValueError("a switch needs the feature cache but aux.sidecar_root is not set")
     from surgicalvla.pseudolabels.reader import SidecarTargets
 
-    return SidecarTargets(
-        aux["sidecar_root"], repo_id, feat_dim=config.aux_feat_dim,
-        track_horizon=int(aux.get("track_horizon", 5)), num_phases=config.num_phases,
+    reader = SidecarTargets(
+        aux["sidecar_root"], repo_id, name=aux.get("cache_name"), expect=cache_expectations(cfg, config),
+        feat_dim=config.aux_feat_dim, track_horizon=int(aux.get("track_horizon", 5)), num_phases=config.num_phases,
         tokenizer=tokenizer if aux.get("cot_traces") else None, cot_max_tokens=config.cot_max_tokens,
+        object_input=getattr(config, "object_input", "none"), upload_repo=aux.get("upload_repo"),
     )
+    if getattr(config, "object_input", "none") != "none":
+        width = reader.manifest.get("columns", {}).get("in_obj_feat", [None, None])[-1]
+        if width is not None and int(width) != int(config.obj_sam_feat_dim):
+            raise ValueError(f"cached object features are {width}-D but the model expects {config.obj_sam_feat_dim}")
+    return reader
 
 
 def build_label_viz(cfg: dict, config, repo_id: str, camera_map: dict | None):
@@ -130,9 +150,12 @@ def build_label_viz(cfg: dict, config, repo_id: str, camera_map: dict | None):
         return None, None
     from surgicalvla.pseudolabels.reader import SidecarTargets
 
-    reader = SidecarTargets(aux["sidecar_root"], repo_id, feat_dim=getattr(config, "aux_feat_dim", 384),
-                            track_horizon=int(aux.get("track_horizon", 5)), num_phases=getattr(config, "num_phases", 4))
-    labelled = (reader.store.manifest.get("config") or {}).get("camera")
+    try:
+        reader = SidecarTargets(aux["sidecar_root"], repo_id, name=aux.get("cache_name"), feat_dim=getattr(config, "aux_feat_dim", 384),
+                                track_horizon=int(aux.get("track_horizon", 5)), num_phases=getattr(config, "num_phases", 4))
+    except FileNotFoundError:
+        return None, None
+    labelled = (reader.manifest.get("labeler") or {}).get("camera")
     keys = list(config.image_features)
     key = (camera_map or {}).get(labelled) if labelled else None
     return reader, key or (keys[0] if keys else None)

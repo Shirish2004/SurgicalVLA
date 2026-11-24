@@ -7,7 +7,7 @@ import pytest
 
 from surgicalvla.pseudolabels.nounphrase import extract_phrase, grounded, rule_phrase
 from surgicalvla.pseudolabels.phases import GRIPPER_EVENT, SPEED_MINIMUM, gripper_events, phase_boundaries, phase_ids, speed_minima
-from surgicalvla.pseudolabels.sidecar import SidecarStore, bits_to_mask, mask_to_bits
+from surgicalvla.pseudolabels.sidecar import bits_to_mask, mask_to_bits
 from surgicalvla.pseudolabels.tracks import grid_points_in_mask
 
 
@@ -58,23 +58,6 @@ def test_mask_bits_roundtrip():
     m[100:300, 200:400] = True
     small = bits_to_mask(mask_to_bits(m))
     assert small.shape == (32, 32) and 0.1 < small.mean() < 0.2
-
-
-def test_store_is_resumable_atomic_and_bounded(tmp_path):
-    store = SidecarStore(tmp_path, "org/ds", config={"stride": 2}, max_gb=1e-9 * 4000)  # ~4 kB cap
-    rng = np.random.default_rng(0)
-    size = store.write(0, {"frame_index": np.arange(10), "x": rng.random(200)})
-    assert store.done(0) and size > 0 and not list(store.dir.glob(".tmp_*"))
-    np.testing.assert_array_equal(store.read(0)["frame_index"], np.arange(10))
-    reopened = SidecarStore(tmp_path, "org/ds", config={"stride": 2}, max_gb=1e-9 * 4000)
-    assert reopened.done(0) and not reopened.done(1)
-    with pytest.raises(ValueError, match="different labeler config"):
-        SidecarStore(tmp_path, "org/ds", config={"stride": 4})
-    with pytest.raises(OSError, match="cap"):  # nothing uploaded, nothing evictable
-        reopened.write(1, {"x": rng.random(2000)})
-    reopened.mark_uploaded(0)
-    reopened.write(1, {"x": rng.random(300)})  # evicts the uploaded episode 0
-    assert not reopened.path(0).exists() and reopened.path(1).exists() and reopened.done(0)
 
 
 # ----------------------------------------------------------------------------- noun phrases

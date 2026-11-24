@@ -1,9 +1,14 @@
-"""Training-time access to sidecar pseudo-labels, keyed by ``(episode_index, frame_index)``.
+"""Training-time access to the feature cache, keyed by ``(episode_index, frame_index)``.
 
-For a dataset frame ``f`` the nearest labelled frame at or before it is used. Each target
-comes with its confidence; episodes without a sidecar get zero confidence, so they add
-nothing to the auxiliary losses. Keys follow the ``aux.*`` convention the model reads, plus
+Targets: for a dataset frame ``f`` the nearest labelled frame at or before it is used. Each
+target comes with its confidence; episodes without cached labels get zero confidence, so they
+add nothing to the auxiliary losses. Keys follow the ``aux.*`` convention the model reads, plus
 ``subtask_phase_id`` (pseudo phase segment, clipped to ``num_phases - 1``).
+
+Inputs (``object_input``): the object descriptors of the latest input frame at or before
+``f``, never a later one, as ``obj_sam_feat (K, C)``, ``obj_pose_vec (K, 8)``,
+``obj_valid_mask (K,)``. ``"objects"`` gives the target candidates and the end effector,
+``"grid"`` the 2×2-grid control from the same encoders.
 """
 
 from __future__ import annotations
@@ -14,46 +19,59 @@ import numpy as np
 import torch
 
 from surgicalvla.pseudolabels.phases import phase_ids
-from surgicalvla.pseudolabels.sidecar import SidecarStore
+from surgicalvla.pseudolabels.cache import FeatureCache, read_traces, rle_decode
+from surgicalvla.pseudolabels.sidecar import mask_to_bits
 
 
 class SidecarTargets:
+    """Reader of one cache directory ``<root>/<dataset-slug>/<name>`` (``FeatureCache``).
+
+    ``expect``: manifest fields the training config requires (``check_manifest``); a
+    mismatch raises before training starts.
+    """
+
     def __init__(
         self,
         root: str,
         dataset_id: str,
         *,
+        name: str | None = None,
+        expect: dict | None = None,
         feat_dim: int = 384,
         track_horizon: int = 5,
         num_phases: int = 4,
         cache_episodes: int = 512,
         tokenizer=None,
         cot_max_tokens: int = 48,
+        object_input: str = "none",
+        upload_repo: str | None = None,
     ):
-        self.store = SidecarStore(root, dataset_id)
+        self.cache = FeatureCache(root, dataset_id, name or latest_cache(root, dataset_id), expect=expect, upload_repo=upload_repo)
         self.feat_dim = int(feat_dim)
         self.track_horizon = int(track_horizon)
         self.num_phases = int(num_phases)
+        self.object_input = object_input
         self._cache: OrderedDict[int, dict | None] = OrderedDict()
         self._cache_size = int(cache_episodes)
-        self.tokenizer = tokenizer  # set to feed explicit CoT traces (cot_<episode>.json) to training
+        self.tokenizer = tokenizer  # set to feed explicit CoT traces to training
         self.cot_max_tokens = int(cot_max_tokens)
-        self._cot: dict[int, list] = {}
+        self._cot: dict[int, list] | None = None
+
+    @property
+    def manifest(self) -> dict:
+        return self.cache.manifest
 
     def trace(self, ep: int, frame: int) -> str:
-        """Stored reasoning trace of the phase segment containing ``frame`` ('' if none)."""
-        if ep not in self._cot:
-            path = self.store.dir / f"cot_{ep:06d}.json"
-            import json
-
-            self._cot[ep] = json.loads(path.read_text()) if path.exists() else []
-        rows = self._cot[ep]
+        """Kept reasoning trace of the phase segment containing ``frame`` ('' if none)."""
+        if self._cot is None:
+            self._cot = read_traces(self.cache)
+        rows = self._cot.get(int(ep), [])
         d = self._episode(ep)
         if not rows or d is None:
             return ""
         seg = int(phase_ids(max(int(frame) + 1, 1), d["phase_frames"])[-1])
         for r in rows:
-            if r["segment"] == seg:
+            if int(r["segment"]) == seg and r.get("kept", True):
                 return r["trace"] or ""
         return ""
 
@@ -61,11 +79,29 @@ class SidecarTargets:
         if ep in self._cache:
             self._cache.move_to_end(ep)
             return self._cache[ep]
-        data = self.store.read(ep) if self.store.done(ep) and self.store.path(ep).exists() else None
+        raw = self.cache.read(ep)
+        data = None if raw is None else episode_view(raw)
         self._cache[ep] = data
         if len(self._cache) > self._cache_size:
             self._cache.popitem(last=False)
         return data
+
+    def frame_inputs(self, ep: int, frame: int) -> dict[str, np.ndarray] | None:
+        """Object inputs of the latest input frame at or before ``frame`` (None if uncached)."""
+        if self.object_input == "none":
+            return None
+        d = self._episode(ep)
+        prefix = "grid" if self.object_input == "grid" else "obj"
+        if d is None or not len(d["in_frame_index"]):
+            return None
+        idx = d["in_frame_index"]
+        j = int(np.searchsorted(idx, frame, side="right") - 1)
+        if j < 0:
+            return None
+        feat = d[f"in_{prefix}_feat"][j].astype(np.float32)
+        pose = d[f"in_{prefix}_pose"][j].astype(np.float32)
+        valid = d["in_obj_valid"][j] if prefix == "obj" else np.ones(len(feat), bool)
+        return {"obj_sam_feat": feat, "obj_pose_vec": pose, "obj_valid_mask": valid.astype(bool)}
 
     def frame_targets(self, ep: int, frame: int) -> dict[str, np.ndarray]:
         out = {
@@ -122,6 +158,13 @@ class SidecarTargets:
         frames = torch.as_tensor(frame_index).reshape(-1).tolist()
         rows = [self.frame_targets(int(e), int(f)) for e, f in zip(eps, frames, strict=True)]
         out = {k: torch.from_numpy(np.stack([r[k] for r in rows])) for k in rows[0]}
+        if self.object_input != "none":
+            ins = [self.frame_inputs(int(e), int(f)) for e, f in zip(eps, frames, strict=True)]
+            ref = next((i for i in ins if i is not None), None)
+            if ref is not None:
+                blank = {k: np.zeros_like(v) for k, v in ref.items()}
+                for k in ref:
+                    out[k] = torch.from_numpy(np.stack([(i or blank)[k] for i in ins]))
         if self.tokenizer is not None:
             texts = [self.trace(int(e), int(f)) for e, f in zip(eps, frames, strict=True)]
             if any(texts):
@@ -130,6 +173,43 @@ class SidecarTargets:
                 out["cot_input_ids"] = enc.input_ids
                 out["cot_attention_mask"] = enc.attention_mask.bool()
         return out
+
+
+def latest_cache(root: str, dataset_id: str) -> str:
+    """Name of the most recently created cache for ``dataset_id`` under ``root``."""
+    import json
+    import re
+    from pathlib import Path
+
+    base = Path(root) / re.sub(r"[^A-Za-z0-9._-]+", "__", dataset_id)
+    found = sorted((json.loads(p.read_text()).get("created", ""), p.parent.name) for p in base.glob("*/manifest.json"))
+    if not found:
+        raise FileNotFoundError(f"no feature cache under {base}; run scripts/make_pseudolabels.py")
+    return found[-1][1]
+
+
+def episode_view(raw: dict) -> dict:
+    """Cache rows of one episode -> per-episode arrays (targets on target frames, inputs on input frames)."""
+    t = raw["has_target"].astype(bool)
+    i = raw["has_input"].astype(bool)
+    h, w = int(raw["ep.height"]), int(raw["ep.width"])
+    d = {
+        "frame_index": raw["frame"][t], "in_frame_index": raw["frame"][i],
+        "target_phrase": raw["ep.phrase"], "instruction": raw["ep.instruction"],
+        "phase_frames": np.asarray(raw["ep.phase_frames"], np.int64),
+        "phase_kinds": np.asarray(raw["ep.phase_kinds"], np.int64),
+        "obj_select_confidence": raw["ep.obj_select_confidence"], "height": h, "width": w,
+    }
+    for k in ("obj_box", "obj_feat", "grip_box", "rel_disp", "obj_motion", "obj_score", "grip_score", "obj_depth",
+              "grip_depth", "rel_confidence", "motion_confidence"):
+        d[k] = raw[k][t]
+    d["tracks"] = np.transpose(raw["track_xy"][t], (1, 0, 2))  # (P, F, 2)
+    d["track_visible"] = raw["track_visible"][t].T
+    rows = np.flatnonzero(t)
+    d["obj_mask"] = np.stack([mask_to_bits(rle_decode(raw["obj_mask_rle"][r], (h, w))) for r in rows]) if len(rows) else np.zeros((0, 128), np.uint8)
+    for k in ("in_obj_feat", "in_obj_pose", "in_obj_valid", "in_grid_feat", "in_grid_pose"):
+        d[k] = raw[k][i]
+    return d
 
 
 def split_future_frames(batch: dict, image_keys: list[str]) -> dict:
@@ -145,4 +225,4 @@ def split_future_frames(batch: dict, image_keys: list[str]) -> dict:
     return batch
 
 
-__all__ = ["SidecarTargets", "split_future_frames"]
+__all__ = ["SidecarTargets", "episode_view", "latest_cache", "split_future_frames"]

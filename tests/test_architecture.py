@@ -12,7 +12,7 @@ from surgicalvla.modules.aux_heads import AuxVisionHeads
 from surgicalvla.modules.moe_layers import PhaseConditionedMoEFFN, SwiGLUExpert, expert_rows
 from surgicalvla.pseudolabels.cot import candidates, motion_word, phase_name
 from surgicalvla.pseudolabels.reader import SidecarTargets, split_future_frames
-from surgicalvla.pseudolabels.sidecar import SidecarStore
+from tests.cache_fixtures import make_cache
 from tests.test_smolvla_moe import H, MLP, make_batch, make_config, make_model, to_model_inputs
 
 
@@ -107,18 +107,7 @@ def test_curriculum_drops_explicit_cot_over_time():
 
 # ----------------------------------------------------------------------------- sidecar targets / traces
 def _store(tmp_path):
-    store = SidecarStore(tmp_path, "org/ds")
-    F_ = 10
-    store.write(3, {
-        "frame_index": np.arange(0, 2 * F_, 2), "target_phrase": np.array("black bowl"),
-        "obj_score": np.full(F_, 0.9, np.float16), "obj_feat": np.ones((F_, 8), np.float16),
-        "obj_motion": np.tile([0.01, 0.0], (F_, 1)).astype(np.float16), "motion_confidence": np.full(F_, 0.8, np.float16),
-        "rel_disp": np.zeros((F_, 3), np.float16), "rel_confidence": np.full(F_, 0.5, np.float16),
-        "tracks": np.cumsum(np.full((4, F_, 2), 0.01), axis=1).astype(np.float16), "track_visible": np.ones((4, F_), bool),
-        "phase_frames": np.array([6, 14], np.int32), "phase_kinds": np.array([0, 0], np.int8), "phase_confidence": np.ones(2, np.float16),
-    })
-    (store.dir / "cot_000003.json").write_text(json.dumps([{"segment": 1, "frame": 10, "trace": "<cot> phase: grasp </cot>", "gain": 0.1}]))
-    return store
+    return make_cache(tmp_path)
 
 
 def test_sidecar_targets_align_frames_and_confidences(tmp_path):
@@ -144,7 +133,9 @@ def test_split_future_frames():
 
 
 def test_cot_candidates_and_phase_names(tmp_path):
-    d = _store(tmp_path).read(3)
+    from surgicalvla.pseudolabels.reader import episode_view
+
+    d = episode_view(_store(tmp_path).read(3))
     assert phase_name(2, d["phase_frames"], d["phase_kinds"]) == "approach"
     assert phase_name(8, d["phase_frames"], d["phase_kinds"]) == "grasp"
     assert phase_name(30, d["phase_frames"], d["phase_kinds"]) == "release"

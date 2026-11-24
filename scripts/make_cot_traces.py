@@ -6,7 +6,7 @@
 For each episode and each phase segment (from the sidecar's phase boundaries), candidate
 traces are built from the pseudo-labels and scored on the segment's middle frame by the
 policy's flow-matching-loss gain (``surgicalvla.pseudolabels.cot``). The best trace with a
-positive gain is stored per segment in ``<sidecar>/<dataset>/cot_<episode>.json``; segments
+positive gain is stored per segment in the cache's trace shards (``cot-*.parquet``, with token ids); segments
 where no trace helps get none. The scoring policy is the SFT policy the traces are for (a
 SmolVLA checkpoint is up-cycled to SurgicalVLA first).
 
@@ -53,11 +53,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo-id", required=True)
     ap.add_argument("--root")
-    ap.add_argument("--episodes", required=True, help="comma list")
+    ap.add_argument("--episodes", required=True, help="comma list or a JSON file with a list")
     ap.add_argument("--sidecar", default="pseudolabels")
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--revision")
     ap.add_argument("--rename", default='{"observation.images.image": "observation.images.camera1", "observation.images.image2": "observation.images.camera2"}')
+    ap.add_argument("--cache-name", help="cache under --sidecar (default: the newest)")
     ap.add_argument("--bootstrap", action="store_true", help="round 1: keep the full trace for every segment, unfiltered")
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
@@ -66,13 +67,23 @@ def main() -> None:
     from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 
     from surgicalvla.pseudolabels.cot import candidates, score
-    from surgicalvla.pseudolabels.sidecar import SidecarStore
+    from surgicalvla.pseudolabels.cache import FeatureCache, write_traces
+    from surgicalvla.pseudolabels.reader import episode_view, latest_cache
 
-    store = SidecarStore(args.sidecar, args.repo_id)
+    cache = FeatureCache(args.sidecar, args.repo_id, args.cache_name or latest_cache(args.sidecar, args.repo_id))
+    views = {}
+
+    def view(ep: int) -> dict:
+        if ep not in views:
+            views[ep] = episode_view(cache.read(ep))
+        return views[ep]
+
     policy, pre, _ = load_policy(args.checkpoint, args.revision, args.device)
     tok = policy.model._tokenizer()
     rename = json.loads(args.rename)
-    episodes = [int(e) for e in args.episodes.split(",")]
+    spec = args.episodes
+    episodes = [int(e) for e in (json.loads(Path(spec).read_text()) if spec.endswith(".json") else spec.split(","))]
+    episodes = [e for e in episodes if cache.done(e)]
     meta = LeRobotDatasetMetadata(args.repo_id, root=args.root)
     from lerobot.datasets.factory import resolve_delta_timestamps
 
@@ -82,7 +93,7 @@ def main() -> None:
     )
     wanted: dict[int, dict[int, int]] = {}
     for ep in episodes:
-        d = store.read(ep)
+        d = view(ep)
         bounds = [0, *[int(f) for f in d["phase_frames"]], int(meta.episodes[ep]["length"])]
         wanted[ep] = {(a + b) // 2: i for i, (a, b) in enumerate(zip(bounds[:-1], bounds[1:], strict=True)) if b > a}
     results: dict[int, list] = {ep: [] for ep in episodes}
@@ -92,7 +103,7 @@ def main() -> None:
             continue
         raw = {rename.get(k, k): (v[None] if torch.is_tensor(v) else [v]) for k, v in item.items()}
         batch = pre(raw)
-        d = store.read(ep)
+        d = view(ep)
         traces = candidates(d, fi)
         gains = score(policy, batch, traces, tok, policy.config.cot_max_tokens)
         best = 1 if args.bootstrap else int(np.argmax(gains))
@@ -100,8 +111,14 @@ def main() -> None:
         results[ep].append({"segment": wanted[ep][fi], "frame": fi, "trace": traces[best] if keep else None,
                             "gain": float(gains[best]), "all_gains": dict(zip(traces, map(float, gains), strict=True))})
         print(json.dumps({"episode": ep, **results[ep][-1]}), flush=True)
-    for ep, rows in results.items():
-        (store.dir / f"cot_{ep:06d}.json").write_text(json.dumps(sorted(rows, key=lambda r: r["frame"]), indent=1))
+    rows = []
+    for ep, eps_rows in results.items():
+        for r in sorted(eps_rows, key=lambda r: r["frame"]):
+            text = r["trace"] or ""
+            rows.append({"episode": ep, "segment": r["segment"], "frame": r["frame"], "trace": text, "kept": r["trace"] is not None,
+                         "gain": r["gain"], "all_gains": json.dumps(r["all_gains"]), "bootstrap": bool(args.bootstrap),
+                         "token_ids": tok(text, add_special_tokens=False).input_ids if text else []})
+    write_traces(cache, rows, tokenizer_id=getattr(tok, "name_or_path", None))
 
 
 if __name__ == "__main__":

@@ -11,8 +11,8 @@ protocol:
   config: configs/benchmarks/libero/sft.yaml
   repo_id: lerobot/libero
   steps: 8000                 # identical for every arm
-  batch_size: 24
-  grad_accum: 4               # effective batch 96
+  batch_size: 16
+  grad_accum: 1               # effective batch 16
   seeds: [0, 1, 2]            # training seeds, all reported
   eval_seeds: [1000, 2000, 3000]
   val_fraction: 0.0           # all demonstrations of the suite train every arm

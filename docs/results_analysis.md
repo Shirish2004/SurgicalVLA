@@ -5,8 +5,8 @@ against the observations without hindsight. "Observed" is filled in from `result
 (`pixi run -e dev figures`) and the paired comparisons (`scripts/compare_arms.py`); every
 observation cites its CI and the arm it is compared with. Negative and null results stay in.
 
-Protocol: `configs/ablations/arms.yaml` (one suite, its demonstrations, 8k steps, effective
-batch 96, 3 training seeds × 3 evaluation seeds × 10 tasks × 50 starting states).
+Protocol: `configs/ablations/arms.yaml` (one suite, its demonstrations, 8k steps, batch
+16, 3 training seeds × 3 evaluation seeds × 10 tasks × 50 starting states).
 
 ## Mechanistic constraints that shape the predictions
 

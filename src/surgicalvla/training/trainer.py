@@ -3,6 +3,7 @@
 import os
 import random
 import re
+import time
 import warnings
 from functools import lru_cache
 
@@ -58,6 +59,22 @@ def collapse_obs_history(batch: dict) -> dict:
     return batch
 
 
+def router_stats(usage: dict) -> dict:
+    """Per-layer routing entropy (normalised to [0, 1]) and the max/min expert load ratio."""
+    import math
+
+    out, ents = {}, []
+    for layer, counts in usage.items():
+        frac = counts.float() / counts.sum().clamp_min(1)
+        ent = float(-(frac * frac.clamp_min(1e-12).log()).sum()) / math.log(max(len(frac), 2))
+        ents.append(ent)
+        out[f"moe/entropy/layer{layer}"] = ent
+        out[f"moe/load_max_over_min/layer{layer}"] = float(frac.max() / frac.min().clamp_min(1e-6))
+    if ents:
+        out["moe/entropy_mean"] = sum(ents) / len(ents)
+    return out
+
+
 def get_rng_state() -> dict:
     state = {"torch": torch.get_rng_state(), "numpy": np.random.get_state(), "python": random.getstate()}
     if torch.cuda.is_available():
@@ -105,6 +122,8 @@ class Trainer:
         label_image_key: str | None = None,
         push_fn=None,
         push_every_save: bool = False,
+        grad_diag_every: int = 0,
+        run_info: dict | None = None,
     ):
         self.grad_accum = grad_accum
         self.policy = policy.to(device)
@@ -129,6 +148,10 @@ class Trainer:
         # push_fn(checkpoint_dir, step): Hub upload of the final checkpoint (or every one)
         self.push_fn = push_fn
         self.push_every_save = push_every_save
+        # every N steps: per-loss gradient norms and pairwise cosines (0 = off)
+        self.grad_diag_every = int(grad_diag_every)
+        self.run_info = run_info  # provenance dict (utils.runinfo); completed with parameters and FLOPs in fit()
+        self._cache_s = 0.0
         self.batch_size = batch_size
         # Map-style data is shuffled by a sampler whose order is a function of (seed, position),
         # so resuming skips to the saved position without loading the skipped samples.
@@ -176,7 +199,9 @@ class Trainer:
             batch = split_future_frames(batch, list(self.policy.config.image_features))
         batch = collapse_obs_history(batch)
         if self.aux_targets is not None and "episode_index" in raw and "frame_index" in raw:
+            t = time.perf_counter()
             batch.update(self.aux_targets.for_batch(raw["episode_index"], raw["frame_index"]))
+            self._cache_s += time.perf_counter() - t
         return self._to_device(batch)
 
     def _cycle(self):
@@ -261,6 +286,20 @@ class Trainer:
         except Exception:
             pass
 
+    def _write_run_info(self, batch: dict | None) -> None:
+        """Provenance with parameter counts and FLOPs measured on ``batch`` (the first training batch;
+        decoding data here, before the loader workers start, would corrupt their video decoders)."""
+        from surgicalvla.utils import runinfo
+
+        info = runinfo.collect(self.run_info.get("config", {}), policy=self.policy, batch=batch,
+                               seeds=self.run_info.get("seeds"), data=self.run_info.get("data"))
+        runinfo.write(info, self.output_dir)
+        if self.logger.wandb:
+            try:
+                self.logger.wandb.config.update({"run_info": {k: v for k, v in info.items() if k != "config"}}, allow_val_change=True)
+            except Exception:
+                pass
+
     def fit(self):
         self.policy.train()
         if hasattr(self.policy, "fit_skills") and (self.rebase_skills or not bool(self.policy.model.skills.frozen)):
@@ -278,30 +317,55 @@ class Trainer:
                     data_iter = self._cycle()
                     next(data_iter)
 
+        clip = float(self.policy.config.optimizer_grad_clip_norm)
+        window = {"clipped": 0, "steps": 0, "data_s": 0.0, "cache_s": 0.0, "step_s": 0.0, "samples": 0}
+        sync = torch.cuda.synchronize if torch.cuda.is_available() else (lambda: None)
         for step in range(self.start_step + 1, self.steps + 1):
+            t_step = time.perf_counter()
             self.optimizer.zero_grad(set_to_none=True)
             # Average the reported metrics over the micro-batches: logging only the
             # last one makes the logged loss noisier than the loss being optimised.
             micro: dict[str, float] = {}
             for _ in range(self.grad_accum):
-                batch = self._prep(next(data_iter))
+                t = time.perf_counter()
+                raw = next(data_iter)
+                window["data_s"] += time.perf_counter() - t  # time blocked on the data loader
+                batch = self._prep(raw)
+                if self.run_info is not None and step == self.start_step + 1 and not micro:
+                    self._write_run_info(batch)
+                    self.policy.train()
+                window["samples"] += int(batch["action"].shape[0])
                 with self._amp():
                     loss, loss_dict = self.policy.forward(batch)
                 (loss / self.grad_accum).backward()
                 for k, v in loss_dict.items():
                     micro[k] = micro.get(k, 0.0) + float(v) / self.grad_accum
             loss_dict = micro
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                self.policy.get_optim_params(), self.policy.config.optimizer_grad_clip_norm
-            )
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.get_optim_params(), clip)
+            window["clipped"] += int(float(grad_norm) > clip)
             self.optimizer.step()
             self.scheduler.step()
             if hasattr(self.policy, "update_ema"):
                 self.policy.update_ema()
             if self.ema is not None:
                 self.ema.update()
+            sync()
+            window["step_s"] += time.perf_counter() - t_step
+            window["steps"] += 1
+            window["cache_s"] += self._cache_s
+            self._cache_s = 0.0
+
+            if self.grad_diag_every and step % self.grad_diag_every == 0:
+                self._log_grad_diagnostics(batch, step)
 
             if step % self.log_every == 0:
+                n = max(window["steps"], 1)
+                loss_dict.update({
+                    "perf/step_s": window["step_s"] / n, "perf/data_wait_s": window["data_s"] / n,
+                    "perf/cache_read_s": window["cache_s"] / n, "perf/samples_per_s": window["samples"] / max(window["step_s"], 1e-9),
+                    "perf/data_stall_frac": window["data_s"] / max(window["step_s"], 1e-9), "grad_clip_rate": window["clipped"] / n,
+                })
+                window = dict.fromkeys(window, 0) | {"data_s": 0.0, "cache_s": 0.0, "step_s": 0.0}
                 loss_dict["grad_norm"] = grad_norm.item()
                 loss_dict["lr"] = self.scheduler.get_last_lr()[0]
                 if torch.cuda.is_available():
@@ -310,6 +374,7 @@ class Trainer:
                 self._safe_log_scalars(loss_dict, step)
                 usage = self.policy.expert_usage() if hasattr(self.policy, "expert_usage") else {}
                 if usage:
+                    self._safe_log_scalars(router_stats(usage), step)
                     heatmap = self.visual_logging and step % self.visual_every == 0
                     self._safe_log_expert_usage(usage, step, heatmap=heatmap)
 
@@ -386,6 +451,41 @@ class Trainer:
                 pass
         pol.train()
         return out
+
+    def _log_grad_diagnostics(self, batch: dict, step: int) -> None:
+        """Gradient norm of each weighted loss term and the cosine between every pair.
+
+        One extra forward on the last micro-batch; each term's gradient over all trainable
+        parameters is kept on the CPU in fp16, so memory stays bounded.
+        """
+        if not hasattr(self.policy, "loss_terms"):
+            return
+        params = [p for p in self.policy.parameters() if p.requires_grad]
+        try:
+            with self._amp():
+                self.policy.forward(batch, keep_loss_terms=True)
+            terms = {k: v for k, v in self.policy.loss_terms.items() if v.requires_grad}
+            grads = {}
+            for i, (name, term) in enumerate(terms.items()):
+                g = torch.autograd.grad(term, params, retain_graph=i < len(terms) - 1, allow_unused=True)
+                flat = torch.cat([(x if x is not None else torch.zeros_like(p)).reshape(-1).float() for x, p in zip(g, params, strict=True)])
+                grads[name] = flat.half().cpu()
+                del g, flat
+            out = {f"grad/norm/{k}": float(v.float().norm()) for k, v in grads.items()}
+            names = list(grads)
+            for i, a in enumerate(names):
+                for b in names[i + 1 :]:
+                    ga, gb = grads[a].float(), grads[b].float()
+                    denom = float(ga.norm() * gb.norm())
+                    out[f"grad/cos/{a}__{b}"] = float(ga @ gb) / denom if denom > 0 else 0.0
+            self._safe_log_scalars(out, step)
+        except Exception:
+            import traceback
+
+            traceback.print_exc()
+        finally:
+            self.policy.loss_terms = {}
+            self.optimizer.zero_grad(set_to_none=True)
 
     def _log_pseudolabels(self, sub: dict, step: int, n: int):
         """Frames of the current batch with their SAM 3 / TAPNext++ / depth / phase pseudo-labels."""

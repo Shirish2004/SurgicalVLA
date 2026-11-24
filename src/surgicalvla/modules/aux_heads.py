@@ -1,7 +1,10 @@
 """Training-only auxiliary vision heads on the VLA's own hidden states.
 
-The heads read the mean-pooled VLM prefix (perception + instruction + state) and predict
-label-free pseudo-targets produced offline (``surgicalvla.pseudolabels``):
+The heads read the mean action-expert output (``aux_source="expert"``, the default) or the
+mean-pooled VLM prefix (``"prefix"``) and predict label-free pseudo-targets produced offline
+(``surgicalvla.pseudolabels``). With the VLM frozen, only the expert source lets the targets
+shape features the policy acts on; the prefix source reaches only the trainable prefix inputs
+(object projector, state projection, latent queries).
 
 * ``feat``:   the target object's mask-pooled DINOv2 feature (cosine loss);
 * ``motion``: the target's image-plane displacement to the next labelled frame;

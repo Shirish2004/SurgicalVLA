@@ -73,6 +73,9 @@ class SmolVLAMoEConfig(SmolVLAConfig):
     # --- label-free auxiliary vision targets (training only, experimental) ---
     aux_vision: bool = False
     aux_feat_dim: int = 384  # DINOv2-S
+    # what the heads read: "expert" (mean action-expert output; trainable even with a frozen VLM)
+    # or "prefix" (mean VLM prefix; only reaches trainable prefix inputs while the VLM is frozen)
+    aux_source: str = "expert"
     aux_feat_weight: float = 0.1
     aux_motion_weight: float = 0.1
     aux_track_weight: float = 0.1
@@ -107,6 +110,8 @@ class SmolVLAMoEConfig(SmolVLAConfig):
         super().__post_init__()
         if self.object_input not in ("none", "objects", "grid"):
             raise ValueError(f"unknown object_input {self.object_input!r}")
+        if self.aux_source not in ("expert", "prefix"):
+            raise ValueError(f"unknown aux_source {self.aux_source!r}")
         if self.object_token_ablation not in ("none", "zero", "shuffle"):
             raise ValueError(f"unknown object_token_ablation {self.object_token_ablation!r}")
         if self.object_input != "none":

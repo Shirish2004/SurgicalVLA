@@ -283,6 +283,8 @@ def main():
         if k in log_cfg and k not in logger_kwargs:
             logger_kwargs[k] = log_cfg[k]
 
+    aux_targets = build_aux_targets(cfg, config, args.repo_id,
+                                    tokenizer=getattr(getattr(policy, "model", None), "_tokenizer", lambda: None)())
     label_viz, label_image_key = build_label_viz(cfg, config, args.repo_id, camera_map)
     from surgicalvla.utils.hub import push_checkpoint
 
@@ -313,8 +315,14 @@ def main():
         label_viz=label_viz,
         push_fn=push_fn,
         push_every_save=bool((cfg.get("hub") or {}).get("push_every_save", False)),
+        grad_diag_every=int(log_cfg.get("grad_diag_every", 0)),
+        run_info={"config": cfg, "seeds": {"run.seed": seed, "split_seed": ds_cfg.get("split_seed", 0)},
+                  "data": {"repo_id": args.repo_id, "train_episodes": len(train_eps) if train_eps is not None else "all",
+                           "val_episodes": len(val_eps) if val_eps else 0,
+                           "cache": None if aux_targets is None else {"dir": str(aux_targets.cache.dir),
+                                                                    "config_hash": aux_targets.manifest.get("config_hash")}}},
         label_image_key=label_image_key,
-        aux_targets=build_aux_targets(cfg, config, args.repo_id, tokenizer=getattr(getattr(policy, "model", None), "_tokenizer", lambda: None)()),
+        aux_targets=aux_targets,
     )
     trainer.fit()
 

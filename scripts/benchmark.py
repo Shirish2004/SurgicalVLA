@@ -265,7 +265,8 @@ def arm_overrides(spec: dict, arm: str, suite: str, seed: int, steps: int | None
              f"model.scheduler_decay_steps={steps or proto['steps']}", f"run.batch_size={proto['batch_size']}",
              f"run.grad_accum={proto['grad_accum']}", f"dataset.episodes={suite_episodes(suite).relative_to(ROOT)}",
              f"dataset.val_fraction={proto['val_fraction']}", f"aux.sidecar_root={SIDECAR}",
-             f"hub.model_name=libero-{suite.removeprefix('libero_')}-{arm.replace('_', '-')}-s{seed}"]
+             f"hub.model_name=libero-{suite.removeprefix('libero_')}-{arm.replace('_', '-')}-s{seed}",
+             f"project.group={suite}/{arm}", f"project.run_name={suite}-{arm}-s{seed}", "project.job_type=sft"]
     if a.get("requires_cache"):
         over.append(f"aux.cache_name={a['requires_cache']}")
     return out, over

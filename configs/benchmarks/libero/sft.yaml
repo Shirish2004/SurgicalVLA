@@ -110,6 +110,7 @@ logging:
   enable_visual_logging: true
   log_dir: "logs"
   log_every_n_steps: 400             # images: camera frames, action plots, MoE heatmap, pseudo-label overlays
+  grad_diag_every: 400               # per-loss gradient norms and pairwise cosines (one extra forward; 0 = off)
   max_log_panels: 50                 # rolling cap per camera -- not yet enforced in logging.py
 
 # Hugging Face Hub (src/surgicalvla/utils/hub.py, docs/training.md#hub). Each trained model is its

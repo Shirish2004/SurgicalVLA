@@ -90,6 +90,8 @@ class ExperimentLogger:
                 for k in ["entity", "group", "job_type", "tags", "notes", "dir", "id", "resume", "reinit", "mode"]:
                     if k in kwargs:
                         init_kwargs[k] = kwargs[k]
+                if kwargs.get("run_name"):
+                    init_kwargs["name"] = kwargs["run_name"]
                 run = self.wandb.init(**init_kwargs)
                 self.run_id = getattr(run, "id", None)  # saved with checkpoints to resume this run
             except Exception:

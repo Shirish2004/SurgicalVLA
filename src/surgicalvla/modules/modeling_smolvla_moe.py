@@ -127,7 +127,8 @@ class SmolVLAMoEModel(nn.Module):
         self.null_phase = nn.Parameter(torch.zeros(self.expert_hidden_size))
         self.pose_head = PoseAuxHead(self.expert_hidden_size, self.vlm_hidden_size, config.pose_target_dim)
         self.phase_head = nn.Linear(self.expert_hidden_size, config.num_phases)
-        self.aux_heads = AuxVisionHeads(self.vlm_hidden_size, config.aux_feat_dim) if config.aux_vision else None
+        aux_in = self.expert_hidden_size if config.aux_source == "expert" else self.vlm_hidden_size
+        self.aux_heads = AuxVisionHeads(aux_in, config.aux_feat_dim) if config.aux_vision else None
         self.latent = LatentReasoner(self.vlm_hidden_size, config.latent_cot_tokens) if config.latent_cot else None
         self.latent_target = (
             EMATargetEncoder(self.vlm_with_expert, config.latent_ema_decay) if config.latent_cot else None
@@ -638,6 +639,10 @@ class SmolVLAMoEModel(nn.Module):
                 reduction="none",
             ).view(target.shape)
             out["cot_loss"] = (ce * mask).sum() / mask.sum().clamp_min(1)
+            with torch.no_grad():
+                hit = (logits[:, :-1].argmax(-1) == target) & mask
+                out["cot_token_acc"] = hit.sum().float() / mask.sum().clamp_min(1)
+                out["cot_trace_len"] = mask.sum(1).float().mean()
             if self.training:
                 self.cot_trained_steps += 1
 
@@ -658,28 +663,30 @@ class SmolVLAMoEModel(nn.Module):
             out["pose_aux_loss"] = pos_loss + rot_loss
 
         if self.aux_heads is not None and aux:
-            out.update(self.aux_heads.losses(pooled, aux))
+            # "expert": mean of the action expert's outputs, so the targets shape trainable features
+            # even with a frozen VLM; "prefix": the pooled VLM prefix
+            src = suffix_out.mean(dim=1) if self.config.aux_source == "expert" else pooled
+            out.update(self.aux_heads.losses(src.to(next(self.aux_heads.parameters()).dtype), aux))
         if self.latent is not None and future_latent is not None and prefix.latent_out is not None:
             out["latent_cot_loss"] = LatentReasoner.loss(self.latent.predict(prefix.latent_out), future_latent)
         if self.training:
             self.train_steps += 1
 
-        total = out["fm_loss"]
-        total = total + self.config.cot_loss_weight * out.get("cot_loss", total.new_zeros(()))
-        total = total + self.config.moe_aux_loss_weight * out["moe_aux_loss"]
-        total = total + self.config.phase_loss_weight * out.get("phase_loss", total.new_zeros(()))
-        total = total + self.config.pose_aux_loss_weight * out.get("pose_aux_loss", total.new_zeros(()))
-        for name, weight in (
-            ("aux_feat_loss", self.config.aux_feat_weight),
-            ("aux_motion_loss", self.config.aux_motion_weight),
-            ("aux_track_loss", self.config.aux_track_weight),
-            ("aux_rel_loss", self.config.aux_rel_weight),
-            ("latent_cot_loss", self.config.latent_cot_weight),
-        ):
+        total = out["fm_loss"].new_zeros(())
+        for name, weight in self.loss_weights().items():
             if name in out:
                 total = total + weight * out[name]
         out["loss"] = total
         return out
+
+    def loss_weights(self) -> dict[str, float]:
+        """Weight of every loss term in the total."""
+        c = self.config
+        return {"fm_loss": 1.0, "cot_loss": c.cot_loss_weight, "moe_aux_loss": c.moe_aux_loss_weight,
+                "phase_loss": c.phase_loss_weight, "pose_aux_loss": c.pose_aux_loss_weight,
+                "aux_feat_loss": c.aux_feat_weight, "aux_motion_loss": c.aux_motion_weight,
+                "aux_track_loss": c.aux_track_weight, "aux_rel_loss": c.aux_rel_weight,
+                "latent_cot_loss": c.latent_cot_weight}
 
     # ---------------------------------------------------------------- denoise
     def denoise_step(
@@ -949,6 +956,7 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
         self.init_rtc_processor()
         self.model = SmolVLAMoEModel(config, rtc_processor=self.rtc_processor)
         self.object_tracker = build_object_tracker(config)
+        self.loss_terms: dict[str, Tensor] = {}
         self.reset()
 
     def reset(self):
@@ -1049,6 +1057,7 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
         time: Tensor | None = None,
         reduction: str = "mean",
         weights: Tensor | None = None,
+        keep_loss_terms: bool = False,
     ) -> tuple[Tensor, dict[str, float]]:
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
@@ -1089,6 +1098,9 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
             future_latent=future_latent,
         )
         loss = out["loss"]
+        if keep_loss_terms:  # weighted terms as they enter the total (gradient diagnostics)
+            w = self.model.loss_weights()
+            self.loss_terms = {k: w[k] * v for k, v in out.items() if k in w and v.dim() == 0 and v.requires_grad}
         if reduction == "none":
             loss = out["fm_loss_per_sample"]
         metrics = {k: float(v.detach()) for k, v in out.items() if v.numel() == 1}

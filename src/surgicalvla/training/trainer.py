@@ -418,6 +418,10 @@ class Trainer:
             time = torch.rand(bsz, generator=gen, device=self.device) * 0.998 + 0.001
             with self._amp():
                 _, ld = pol.forward(batch, noise=noise, time=time)
+            if hasattr(pol, "vlm_feature_drift") and getattr(cfg, "vlm_lora_rank", 0) > 0:
+                with self._amp():
+                    drift = pol.vlm_feature_drift(batch)
+                stats["vlm_feature_cos"] = stats.get("vlm_feature_cos", 0.0) + drift * bsz
             if "cot_input_ids" in batch and bsz > 1:
                 self._cot_faithfulness(batch, noise, time, faith)
             for k in (

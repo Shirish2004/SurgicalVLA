@@ -102,6 +102,11 @@ class SmolVLAMoEModel(nn.Module):
             expert_width_multiplier=config.expert_width_multiplier,
             device=config.device if config.device is not None else "auto",
         )
+        if config.vlm_lora_rank > 0:
+            from surgicalvla.modules.lora import apply_vlm_lora
+
+            self.vlm_lora_params = apply_vlm_lora(self.vlm_with_expert, config.vlm_lora_rank, config.vlm_lora_alpha,
+                                                  parts=tuple(config.vlm_lora_parts))
         self.vlm_hidden_size = int(self.vlm_with_expert.config.text_config.hidden_size)
         self.expert_hidden_size = int(self.vlm_with_expert.expert_hidden_size)
 
@@ -965,6 +970,28 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
     def reset(self):
         super().reset()
         self.model.reset_cot()
+
+    @torch.no_grad()
+    def vlm_feature_drift(self, batch: dict[str, Tensor]) -> float | None:
+        """Forgetting check for VLM adapters: mean cosine between the pooled VLM prefix with and
+        without LoRA on ``batch`` (1 = the VLM's representation is unchanged)."""
+        if self.config.vlm_lora_rank <= 0:
+            return None
+        from surgicalvla.modules.lora import lora_disabled
+
+        images, img_masks = self.prepare_images(batch)
+        state = self.prepare_state(batch)
+        args = (images, img_masks, batch[OBS_LANGUAGE_TOKENS], batch[OBS_LANGUAGE_ATTENTION_MASK], state, self._objects(batch))
+
+        def pooled():
+            p = self.model.prepare_prefix(*args, use_cache=True)
+            m = p.pad_masks[..., None].to(p.out.dtype)
+            return (p.out * m).sum(1) / m.sum(1).clamp_min(1)
+
+        adapted = pooled()
+        with lora_disabled(self.model.vlm_with_expert):
+            frozen = pooled()
+        return float(F.cosine_similarity(adapted.float(), frozen.float(), dim=-1).mean())
 
     def attach_live_perception(self, extractor, camera_key: str | None = None) -> None:
         """Compute object inputs from the current frame at inference (evaluation, deployment).

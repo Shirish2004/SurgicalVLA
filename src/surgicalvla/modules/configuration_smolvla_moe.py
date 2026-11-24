@@ -76,6 +76,14 @@ class SmolVLAMoEConfig(SmolVLAConfig):
     # what the heads read: "expert" (mean action-expert output; trainable even with a frozen VLM)
     # or "prefix" (mean VLM prefix; only reaches trainable prefix inputs while the VLM is frozen)
     aux_source: str = "expert"
+
+    # --- VLM adaptation (docs/vlm_changes.md) --------------------------------
+    # LoRA on the frozen VLM: rank 0 = off. "text" adapts the 16 decoder layers' attention and
+    # MLP projections, "vision" the SigLIP encoder. Lets auxiliary, CoT and phase losses (and
+    # the action loss) change the prefix features while the pretrained weights stay frozen.
+    vlm_lora_rank: int = 0
+    vlm_lora_alpha: float = 16.0
+    vlm_lora_parts: list[str] = field(default_factory=lambda: ["text"])
     aux_feat_weight: float = 0.1
     aux_motion_weight: float = 0.1
     aux_track_weight: float = 0.1
@@ -112,6 +120,8 @@ class SmolVLAMoEConfig(SmolVLAConfig):
             raise ValueError(f"unknown object_input {self.object_input!r}")
         if self.aux_source not in ("expert", "prefix"):
             raise ValueError(f"unknown aux_source {self.aux_source!r}")
+        if self.vlm_lora_rank < 0 or not set(self.vlm_lora_parts) <= {"text", "vision"}:
+            raise ValueError(f"bad VLM LoRA settings: rank {self.vlm_lora_rank}, parts {self.vlm_lora_parts}")
         if self.object_token_ablation not in ("none", "zero", "shuffle"):
             raise ValueError(f"unknown object_token_ablation {self.object_token_ablation!r}")
         if self.object_input != "none":

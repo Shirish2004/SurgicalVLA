@@ -6,8 +6,9 @@
     pixi run -e sim-eval python scripts/eval_libero_baseline.py aggregate --root results/baselines/smolvla_libero
 
 Protocol (docs/baselines.md): every task x all 50 benchmark init states x each
-seed. ``batch_size`` divides ``n_episodes`` so each vector env strides through a
-disjoint block of init states and every init state is used exactly once per seed.
+seed. ``batch_size`` divides ``n_episodes`` and vector environment ``j`` uses init states
+``j, j + b, j + 2b, ...``, so every init state is used exactly once per seed and episode
+``i`` of a task runs init state ``i``.
 The seed changes the policy's flow noise and the env RNG, not the init states.
 
 Statistics. Episodes that share an init state across seeds are correlated, so a
@@ -115,14 +116,47 @@ def _episodes(info: dict) -> dict[str, list[bool]]:
     return out
 
 
+def init_state_of(episode_ix: int, n_init_states: int = 50) -> int:
+    """Benchmark init state of the ``episode_ix``-th episode of a task.
+
+    LeRobot's LIBERO environment ``j`` of ``b`` starts at init state ``j`` and advances by
+    ``b`` on every reset (``sim/integrations/libero.py``), and episodes are recorded rollout by
+    rollout, so episode ``r * b + j`` uses init state ``r * b + j``: the episode index itself.
+    """
+    return int(episode_ix) % n_init_states
+
+
+def episode_records(root: Path, suite: str, seed_file: Path, info: dict) -> list[dict]:
+    """One record per episode: (suite, seed, task, episode_ix, init_state, success, length, outcome)."""
+    lengths_path = seed_file.parent / "episode_lengths.json"
+    lengths = json.loads(lengths_path.read_text()) if lengths_path.exists() else None
+    eps = _episodes(info)
+    total = sum(len(v) for v in eps.values())
+    if lengths is not None and len(lengths) != total:
+        lengths = None  # tasks ran in parallel or the file is from another run: lengths unknown
+    out, k = [], 0
+    for task in eps:  # eval_info keeps LeRobot's task order
+        for ix, success in enumerate(eps[task]):
+            length = None if lengths is None else int(lengths[k])
+            out.append({"suite": suite, "seed": seed_file.parent.name, "task": task, "episode_ix": ix,
+                        "init_state": init_state_of(ix), "success": bool(success),
+                        "length": length, "outcome": "success" if success else "timeout"})
+            k += 1
+    return out
+
+
 def aggregate(args) -> dict:
     root = Path(args.root)
     report: dict = {"suites": {}}
+    records: list[dict] = []
     for suite_dir in sorted(p for p in root.iterdir() if p.is_dir()):
         seeds = sorted(suite_dir.glob("seed*/eval_info.json"))
         if not seeds:
             continue
-        runs = [_episodes(json.loads(p.read_text())) for p in seeds]
+        infos = [json.loads(p.read_text()) for p in seeds]
+        runs = [_episodes(i) for i in infos]
+        for p, i in zip(seeds, infos, strict=True):
+            records += episode_records(root, suite_dir.name, p, i)
         tasks = sorted(runs[0])
         n_ep = min(len(r[t]) for r in runs for t in tasks)
         # (task, init_state) clusters x seeds
@@ -145,6 +179,8 @@ def aggregate(args) -> dict:
     if suites:
         report["average"] = float(np.mean([s["success_mean"] for s in suites.values()]))
     (root / "summary.json").write_text(json.dumps(report, indent=2))
+    if records:
+        (root / "episodes.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
     for name, s in suites.items():
         lo, hi = s["ci95_cluster_bootstrap"]
         print(

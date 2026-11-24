@@ -113,6 +113,19 @@ class ExperimentLogger:
         if self.wandb:
             self.wandb.log(metrics, step=step)
 
+    def log_text(self, tag: str, texts: list[str], step: int):
+        """Text samples (e.g. generated reasoning traces): TensorBoard, W&B table and ``texts.jsonl``."""
+        with open(os.path.join(os.path.dirname(self.csv_path), "texts.jsonl"), "a") as f:
+            for t in texts:
+                f.write(json.dumps({"step": int(step), "tag": tag, "text": t}) + "\n")
+        if self.writer is not None:
+            self.writer.add_text(tag, "\n\n".join(texts), step)
+        if self.wandb:
+            try:
+                self.wandb.log({tag: self.wandb.Table(columns=["step", "text"], data=[[int(step), t] for t in texts])}, step=step)
+            except Exception:
+                pass
+
     def log_images(self, images: torch.Tensor, step: int, tag: str = "images", nrow: int = 4):
         if images.min() < 0:
             images = (images.clamp(-1, 1) + 1) / 2

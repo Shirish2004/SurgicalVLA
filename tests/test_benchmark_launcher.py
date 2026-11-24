@@ -137,3 +137,22 @@ def test_ablate_dry_run_trains_then_evaluates(capsys):
     out = capsys.readouterr().out
     assert "outputs/ablations/libero_object/smolvla/seed0" in out and "outputs/ablations/libero_object/full/seed0" in out
     assert "smolvla_moe.object_input=none" in out and "smolvla_moe.object_input=objects" in out
+
+
+def test_paired_comparison_matches_starting_states():
+    from scripts.compare_arms import compare, mcnemar_exact
+
+    rows = lambda succ, ts: [{"suite": "s", "seed": "seed1000", "task": f"t{i // 10}", "init_state": i % 10,  # noqa: E731
+                              "success": bool(x), "train_seed": ts} for i, x in enumerate(succ)]
+    a = rows([0] * 20, "seed0")
+    b = rows([1] * 10 + [0] * 10, "seed0")
+    r = compare(a, b, n_boot=200)["s"]
+    assert r["episodes"] == 20 and r["diff_b_minus_a"] == 0.5 and r["b_only_success"] == 10
+    assert r["mcnemar_p"] == mcnemar_exact(10, 0) < 0.01
+    assert r["ci95_cluster_bootstrap"][0] > 0
+
+
+def test_init_state_is_the_episode_index():
+    from scripts.eval_libero_baseline import init_state_of
+
+    assert [init_state_of(i) for i in (0, 9, 10, 49)] == [0, 9, 10, 49]

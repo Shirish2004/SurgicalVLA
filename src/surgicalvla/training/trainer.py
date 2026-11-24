@@ -410,6 +410,7 @@ class Trainer:
         devices = [torch.device(self.device).index or 0] if cuda else []
         acc = Accumulator()
         stats, count, first = {}, 0, None
+        faith: dict[str, list[float]] = {}
         for raw in self.val_loader:
             batch = self._prep(raw)
             bsz = batch["action"].shape[0]
@@ -417,11 +418,20 @@ class Trainer:
             time = torch.rand(bsz, generator=gen, device=self.device) * 0.998 + 0.001
             with self._amp():
                 _, ld = pol.forward(batch, noise=noise, time=time)
+            if "cot_input_ids" in batch and bsz > 1:
+                self._cot_faithfulness(batch, noise, time, faith)
             for k in (
                 "loss",
                 "losses_after_rm_padding",
                 "fm_loss",
                 "cot_loss",
+                "cot_token_acc",
+                "cot_trace_len",
+                "aux_feat_loss",
+                "aux_motion_loss",
+                "aux_track_loss",
+                "aux_rel_loss",
+                "latent_cot_loss",
                 "moe_aux_loss",
                 "phase_loss",
                 "pose_aux_loss",
@@ -434,6 +444,8 @@ class Trainer:
                 if k in ld:
                     stats[k] = stats.get(k, 0.0) + float(ld[k]) * bsz
             count += bsz
+            if hasattr(pol, "reset"):
+                pol.reset()
             with torch.random.fork_rng(devices=devices):
                 torch.manual_seed(0)
                 with self._amp():
@@ -443,7 +455,10 @@ class Trainer:
                 first = (pred.float().cpu(), batch["action"].float().cpu())
         out = {f"{prefix}/{k}": v / max(count, 1) for k, v in stats.items()}
         out.update({f"{prefix}/{k}": v for k, v in acc.result().items() if isinstance(v, float)})
+        out.update({f"{prefix}/cot_gain/{k}": float(np.mean(v)) for k, v in faith.items() if v})
         self._safe_log_scalars(out, step)
+        if preview and getattr(cfg, "use_cot", False) and hasattr(pol, "model") and hasattr(pol.model, "generate_cot"):
+            self._log_generated_traces(step)
         if preview and first is not None:
             try:
                 self.logger.log_action_trajectories(first[0], first[1], step, name="val_actions")
@@ -451,6 +466,45 @@ class Trainer:
                 pass
         pol.train()
         return out
+
+    @torch.no_grad()
+    def _cot_faithfulness(self, batch: dict, noise, time, faith: dict) -> None:
+        """Action-likelihood gain of the true trace over a mismatched one (another sample's trace,
+        same noise and flow time): positive = the policy's actions depend on what the trace says.
+        Reported overall and per phase (``subtask_phase_id``)."""
+        perturbed = {**batch, "cot_input_ids": batch["cot_input_ids"].roll(1, 0), "cot_attention_mask": batch["cot_attention_mask"].roll(1, 0)}
+        with self._amp():
+            loss_p, _ = self.policy.forward(perturbed, noise=noise, time=time, reduction="none")
+            loss_t, _ = self.policy.forward(batch, noise=noise, time=time, reduction="none")
+        gain = (loss_p.float() - loss_t.float()).cpu()
+        faith.setdefault("all", []).extend(gain.tolist())
+        phases = batch.get("subtask_phase_id")
+        names = getattr(self.policy.config, "phase_names", ())
+        if phases is not None:
+            for g, ph in zip(gain.tolist(), phases.reshape(-1).tolist(), strict=False):
+                faith.setdefault(names[int(ph)] if int(ph) < len(names) else str(ph), []).append(g)
+
+    def _log_generated_traces(self, step: int, n: int = 2) -> None:
+        """Decode the reasoning text the policy generates for a few validation frames."""
+        try:
+            raw = next(iter(self.val_loader))
+            batch = self._prep(raw)
+            sub = {k: v[:n] if torch.is_tensor(v) and v.dim() > 0 else v for k, v in batch.items()}
+            pol = self.policy
+            images, img_masks = pol.prepare_images(sub)
+            with self._amp():
+                ids = pol.model.generate_cot(images, img_masks, sub[OBS_LANGUAGE_TOKENS], sub[OBS_LANGUAGE_ATTENTION_MASK],
+                                             pol.prepare_state(sub), pol._objects(sub))
+            tok = pol.model._tokenizer()
+            ids = ids[0] if isinstance(ids, tuple) else ids
+            if ids is None:
+                return
+            texts = [tok.decode(row, skip_special_tokens=True) for row in ids.cpu()]
+            self.logger.log_text("cot/generated", texts, step)
+        except Exception:
+            import traceback
+
+            traceback.print_exc()
 
     def _log_grad_diagnostics(self, batch: dict, step: int) -> None:
         """Gradient norm of each weighted loss term and the cosine between every pair.
@@ -516,6 +570,8 @@ class Trainer:
         bs = batch["action"].shape[0]
         sub = {k: v[:n] if torch.is_tensor(v) and v.dim() > 0 and v.shape[0] == bs else v for k, v in batch.items()}
         self.policy.eval()
+        if hasattr(self.policy, "reset"):
+            self.policy.reset()  # a new set of frames: no reasoning carried over
         try:
             with self._amp():
                 pred = self.policy.predict_action_chunk(sub)

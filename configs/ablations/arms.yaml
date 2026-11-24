@@ -1,0 +1,91 @@
+# Ablation arms for SurgicalVLA (scripts/benchmark.py ablate; docs/baselines.md §4).
+#
+# Fair comparison: every arm is trained by the same trainer from the same initialisation
+# (lerobot/smolvla_base) on the same episodes, for the same steps, batch and LR schedule, at
+# the same image resolution, and evaluated with the same harness on the same starting states.
+# Each arm sets EVERY switch below explicitly, so a change of a default in sft.yaml can never
+# change an arm. Only the factor under test differs from the arm it is compared with
+# (`compare_to`).
+
+protocol:
+  config: configs/benchmarks/libero/sft.yaml
+  repo_id: lerobot/libero
+  steps: 20000                # identical for every arm
+  batch_size: 24
+  grad_accum: 4               # effective batch 96
+  seeds: [0, 1, 2]            # training seeds, all reported
+  eval_seeds: [1000, 2000, 3000]
+  val_fraction: 0.0           # all demonstrations of the suite train every arm
+
+# Complete switch set; every arm lists all of these.
+switches:
+  - smolvla_moe.moe_variant
+  - smolvla_moe.object_input
+  - smolvla_moe.aux_vision
+  - smolvla_moe.use_cot
+  - smolvla_moe.latent_cot
+  - smolvla_moe.cot_curriculum_steps
+  - aux.cot_traces
+
+arms:
+  smolvla:
+    what: "SmolVLA architecture (dense expert FFN), no additions: the matched baseline (arm 2)"
+    compare_to: null
+    set: {smolvla_moe.moe_variant: dense, smolvla_moe.object_input: none, smolvla_moe.aux_vision: false,
+          smolvla_moe.use_cot: false, smolvla_moe.latent_cot: false, smolvla_moe.cot_curriculum_steps: 0, aux.cot_traces: false}
+  aux_only:
+    what: "auxiliary vision heads on pseudo-label targets (training only, no inference change)"
+    compare_to: smolvla
+    set: {smolvla_moe.moe_variant: dense, smolvla_moe.object_input: none, smolvla_moe.aux_vision: true,
+          smolvla_moe.use_cot: false, smolvla_moe.latent_cot: false, smolvla_moe.cot_curriculum_steps: 0, aux.cot_traces: false}
+  objtok_only:
+    what: "object tokens as input (target candidates + end effector, past-only perception)"
+    compare_to: smolvla
+    set: {smolvla_moe.moe_variant: dense, smolvla_moe.object_input: objects, smolvla_moe.aux_vision: false,
+          smolvla_moe.use_cot: false, smolvla_moe.latent_cot: false, smolvla_moe.cot_curriculum_steps: 0, aux.cot_traces: false}
+  frozen_control:
+    what: "same frozen encoders and token count, no object structure (2x2 grid): separates 'objects' from 'more features'"
+    compare_to: objtok_only
+    set: {smolvla_moe.moe_variant: dense, smolvla_moe.object_input: grid, smolvla_moe.aux_vision: false,
+          smolvla_moe.use_cot: false, smolvla_moe.latent_cot: false, smolvla_moe.cot_curriculum_steps: 0, aux.cot_traces: false}
+  vision:
+    what: "auxiliary heads + object tokens"
+    compare_to: smolvla
+    set: {smolvla_moe.moe_variant: dense, smolvla_moe.object_input: objects, smolvla_moe.aux_vision: true,
+          smolvla_moe.use_cot: false, smolvla_moe.latent_cot: false, smolvla_moe.cot_curriculum_steps: 0, aux.cot_traces: false}
+  cot_explicit:
+    what: "vision + explicit reasoning text (bootstrap traces), decoded at inference"
+    compare_to: vision
+    set: {smolvla_moe.moe_variant: dense, smolvla_moe.object_input: objects, smolvla_moe.aux_vision: true,
+          smolvla_moe.use_cot: true, smolvla_moe.latent_cot: false, smolvla_moe.cot_curriculum_steps: 0, aux.cot_traces: true}
+  cot_latent:
+    what: "vision + latent reasoning tokens (future visual latent), no text"
+    compare_to: vision
+    set: {smolvla_moe.moe_variant: dense, smolvla_moe.object_input: objects, smolvla_moe.aux_vision: true,
+          smolvla_moe.use_cot: false, smolvla_moe.latent_cot: true, smolvla_moe.cot_curriculum_steps: 0, aux.cot_traces: false}
+  cot_curriculum:
+    what: "vision + explicit-to-latent curriculum (explicit text fades out over half the steps; latent-only at inference)"
+    compare_to: vision
+    set: {smolvla_moe.moe_variant: dense, smolvla_moe.object_input: objects, smolvla_moe.aux_vision: true,
+          smolvla_moe.use_cot: true, smolvla_moe.latent_cot: true, smolvla_moe.cot_curriculum_steps: 10000, aux.cot_traces: true}
+  full:
+    what: "final SurgicalVLA: cot_curriculum + phase-conditioned MoE (the sft.yaml defaults)"
+    compare_to: cot_curriculum
+    set: {smolvla_moe.moe_variant: upcycled, smolvla_moe.object_input: objects, smolvla_moe.aux_vision: true,
+          smolvla_moe.use_cot: true, smolvla_moe.latent_cot: true, smolvla_moe.cot_curriculum_steps: 10000, aux.cot_traces: true}
+  full_moe_matched:
+    what: "full with the compute-matched MoE (1x dense FFN compute)"
+    compare_to: full
+    set: {smolvla_moe.moe_variant: matched, smolvla_moe.object_input: objects, smolvla_moe.aux_vision: true,
+          smolvla_moe.use_cot: true, smolvla_moe.latent_cot: true, smolvla_moe.cot_curriculum_steps: 10000, aux.cot_traces: true}
+  oracle_vision:
+    what: "upper bound: 'vision' with simulator ground truth in place of pseudo-labels (needs the oracle cache)"
+    compare_to: vision
+    requires_cache: oracle
+    set: {smolvla_moe.moe_variant: dense, smolvla_moe.object_input: objects, smolvla_moe.aux_vision: true,
+          smolvla_moe.use_cot: false, smolvla_moe.latent_cot: false, smolvla_moe.cot_curriculum_steps: 0, aux.cot_traces: false}
+
+# Order of the Spatial ladder (gate: stop a component whose oracle arm does not beat smolvla).
+ladder: [smolvla, oracle_vision, aux_only, objtok_only, frozen_control, vision, cot_explicit, cot_latent, cot_curriculum, full, full_moe_matched]
+# Other suites: baseline vs final model.
+per_suite: [smolvla, full]

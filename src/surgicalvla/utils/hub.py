@@ -7,8 +7,9 @@ directly. All of them are also gathered in one Hub collection named ``surgical-v
 ``<model-name>`` is ``hub.model_name`` when set (``{benchmark}``, ``{stage}``, ``{seed}``,
 ``{variant}``, ``{mode}`` are filled in), otherwise it is derived from the run's settings, e.g.
 
-    libero-sft-upcycled-s0                  SFT, all switches off
-    libero-sft-matched-aux-lcot-spatial-s1  SFT on one suite with auxiliary heads + latent CoT
+    libero-sft-upcycled-obj-aux-lcot-cot-cur-s0   SFT, final architecture (the sft.yaml defaults)
+    libero-sft-dense-s0                           SFT, SmolVLA architecture, no additions
+    libero-sft-matched-aux-lcot-spatial-s1        one suite, auxiliary heads + latent CoT
     libero-rl-joint-libero10-s0             RL (joint SFT+RL) on libero_10
 """
 
@@ -51,6 +52,8 @@ def model_name(cfg: dict, stage: str) -> str:
         policy = (cfg.get("model") or {}).get("policy_type", "smolvla_moe")
         parts = [benchmark, "sft", variant if policy == "smolvla_moe" else policy]
         aux = cfg.get("aux") or {}
+        if m.get("object_input", "none") not in ("none", None):
+            parts.append("obj" if m["object_input"] == "objects" else m["object_input"])
         if m.get("aux_vision"):
             parts.append("aux")
         if m.get("latent_cot"):

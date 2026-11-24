@@ -72,10 +72,10 @@ moe:
 
 # Only read when model.policy_type == "smolvla_moe" (SmolVLAMoEConfig fields).
 smolvla_moe:
-  num_object_tokens: 4
-  num_objects: 2                  # 1 for single-arm, 2 for bimanual handover
+  num_object_tokens: 4             # derived from object_input when it is set
+  num_objects: 2                  # derived from object_input when it is set (obj_candidates + 1)
   obj_tracker_mode: "passthrough" # passthrough | cached | mock | live
-  use_cot: true
+  use_cot: true                   # explicit reasoning text (needs aux.cot_traces)
   cot_max_tokens: 48
   cot_refresh_interval: 10
   num_experts: 4
@@ -86,17 +86,24 @@ smolvla_moe:
   pose_aux_loss_weight: 0.2
   expert_cross_attn_vlm_layers: 0  # must equal num_vlm_layers (0 -> all)
   use_reinflow: false
-  # architecture switches (experimental until their ablation passes; docs/limitations.md)
-  moe_variant: "upcycled"         # upcycled | matched | dense | dense_param_matched
-  aux_vision: false               # label-free auxiliary vision heads (needs aux.sidecar_root)
-  latent_cot: false               # latent reasoning tokens predicting a future visual latent
-  cot_curriculum_steps: 0         # >0: explicit -> latent CoT curriculum over this many steps
+  # Final architecture: vision and CoT ON. Every switch stays for the ablations
+  # (configs/ablations/arms.yaml sets all of them per arm; docs/architecture.md).
+  moe_variant: "upcycled"         # upcycled | matched | dense (= SmolVLA) | dense_param_matched
+  object_input: "objects"         # none | objects (target candidates + end effector) | grid (control)
+  obj_candidates: 3               # target-phrase instances given to the policy per frame
+  aux_vision: true                # auxiliary vision heads on pseudo-label targets (training only)
+  latent_cot: true                # latent reasoning tokens predicting a future visual latent
+  cot_curriculum_steps: 25000     # explicit -> latent over this many steps (half of run.steps); latent-only at inference
 
 # Pseudo-label sidecar (scripts/make_pseudolabels.py); used only when a switch above needs it
 aux:
-  sidecar_root: "pseudolabels"    # labelled episodes are also drawn on logged frames (never a target unless a switch is on)
+  sidecar_root: "pseudolabels"    # feature cache root (scripts/make_pseudolabels.py); also drawn on logged frames
+  cache_name: null                # null -> the newest cache of this dataset under sidecar_root
+  upload_repo: null               # Hub dataset holding evicted shards, e.g. "Shirish24/surgical-vla-cache"
+  expect:                         # the run refuses a cache whose manifest differs in any of these
+    labeler: {stride: 4, input_stride: 1, causal_inputs: true}
   track_horizon: 5                # labelled frames ahead for the point-track target
-  cot_traces: false               # feed explicit reasoning traces (scripts/make_cot_traces.py)
+  cot_traces: true                # feed explicit reasoning traces (scripts/make_cot_traces.py)
 
 # Visual panels / CSV / routing-drift plots
 logging:

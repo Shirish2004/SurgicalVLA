@@ -94,3 +94,46 @@ def test_pipeline_trains_every_benchmark_before_any_eval(capsys):
     evals = [i for i, line in enumerate(lines) if "lerobot_eval.py" in line or "eval_libero_baseline.py run" in line]
     assert len(train) == 6 and evals and max(train) < min(evals)
     assert any("--env-type libero_plus" in line for line in lines)
+
+
+def test_every_arm_sets_every_switch_and_shares_the_protocol():
+    spec = bench.load_arms()
+    outs = {}
+    for arm in spec["arms"]:
+        out, over = bench.arm_overrides(spec, arm, "libero_spatial", 0)
+        keys = {o.split("=", 1)[0] for o in over}
+        assert set(spec["switches"]) <= keys
+        shared = sorted(o for o in over if o.split("=", 1)[0] in {"run.steps", "run.batch_size", "run.grad_accum", "dataset.episodes"})
+        outs[arm] = shared
+    assert len({tuple(v) for v in outs.values()}) == 1  # identical steps, batch and data for every arm
+
+
+def test_each_comparison_differs_only_in_the_factor_under_test():
+    spec = bench.load_arms()
+    expected = {"aux_only": {"smolvla_moe.aux_vision"}, "objtok_only": {"smolvla_moe.object_input"},
+                "frozen_control": {"smolvla_moe.object_input"}, "full": {"smolvla_moe.moe_variant"},
+                "full_moe_matched": {"smolvla_moe.moe_variant"}, "cot_latent": {"smolvla_moe.latent_cot"}}
+    for arm, factor in expected.items():
+        a, b = spec["arms"][arm]["set"], spec["arms"][spec["arms"][arm]["compare_to"]]["set"]
+        assert {k for k in a if a[k] != b[k]} == factor, arm
+
+
+def test_final_architecture_is_the_sft_default():
+    import yaml
+
+    spec = bench.load_arms()
+    for b in ("libero", "robotwin", "vlabench"):
+        cfg = yaml.safe_load(open(f"configs/benchmarks/{b}/sft.yaml"))
+        for key, want in spec["arms"]["full"]["set"].items():
+            section, name = key.split(".")
+            if key == "smolvla_moe.cot_curriculum_steps":
+                assert cfg[section][name] > 0
+            else:
+                assert cfg[section][name] == want, (b, key)
+
+
+def test_ablate_dry_run_trains_then_evaluates(capsys):
+    bench.ablate(argparse.Namespace(suite="libero_object", arms=None, seeds=[0], steps=None, dry_run=True), [])
+    out = capsys.readouterr().out
+    assert "outputs/ablations/libero_object/smolvla/seed0" in out and "outputs/ablations/libero_object/full/seed0" in out
+    assert "smolvla_moe.object_input=none" in out and "smolvla_moe.object_input=objects" in out

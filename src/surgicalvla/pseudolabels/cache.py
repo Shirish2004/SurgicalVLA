@@ -345,7 +345,7 @@ class FeatureCache:
         eps = t["episodes"].to_pylist()
         meta = next(e for e in eps if int(e["episode"]) == int(episode))
         for k, v in meta.items():
-            out[f"ep.{k}"] = json.loads(v) if isinstance(v, str) and v[:1] in "[{" else v
+            out[f"ep.{k}"] = json.loads(v) if isinstance(v, str) and v.startswith(("[", "{")) else v
         return out
 
 

@@ -31,6 +31,10 @@ def test_cache_roundtrip_resume_and_checksum(tmp_path):
         FeatureCache(tmp_path, "org/ds", "test").read(3)
 
 
+def test_empty_episode_strings_read_back_as_strings(tmp_path):
+    assert make_cache(tmp_path, phrase="").read(3)["ep.phrase"] == ""
+
+
 def test_reader_refuses_a_mismatched_cache_and_names_the_field(tmp_path):
     make_cache(tmp_path)
     with pytest.raises(CacheMismatch) as err:

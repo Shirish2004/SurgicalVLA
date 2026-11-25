@@ -11,7 +11,7 @@ MANIFEST = {"labeler": {"stride": 2, "input_stride": 1, "causal_inputs": True, "
             "modules": {}, "config_hash": "test-hash"}
 
 
-def make_cache(tmp_path, *, n: int = 20, feat: int = 8, episode: int = 3) -> FeatureCache:
+def make_cache(tmp_path, *, n: int = 20, feat: int = 8, episode: int = 3, phrase: str = "black bowl") -> FeatureCache:
     f = n // 2  # labelled frames (stride 2)
     h = w = 16
     obj_masks = np.zeros((f, h, w), bool)
@@ -31,7 +31,7 @@ def make_cache(tmp_path, *, n: int = 20, feat: int = 8, episode: int = 3) -> Fea
               "grid_feat": np.zeros((n, 4, feat)), "grid_pose": np.zeros((n, 4, 8))}
     cols = episode_rows(n, 2, 1, vis, tracks, inputs, k, feat, 32)
     cache = FeatureCache(tmp_path, "org/ds", "test", manifest=MANIFEST)
-    cache.add({"episode": episode, "length": n, "instruction": "pick up the black bowl", "phrase": "black bowl",
+    cache.add({"episode": episode, "length": n, "instruction": "pick up the black bowl", "phrase": phrase,
                "phrase_confidence": 1.0, "height": h, "width": w, "obj_select_confidence": 0.9,
                "phase_frames": [6, 14], "phase_kinds": [0, 0], "phase_confidence": [1.0, 1.0]}, cols)
     cache.flush()

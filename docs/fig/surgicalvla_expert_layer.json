@@ -1,0 +1,401 @@
+{
+ "name": "surgicalvla_expert_layer",
+ "width": 1120,
+ "height": 720,
+ "nodes": [
+  {
+   "id": "hin",
+   "type": "tensor",
+   "x": 36,
+   "y": 290,
+   "w": 70,
+   "h": 26,
+   "label": "h",
+   "dim": "50 × 720"
+  },
+  {
+   "id": "kv",
+   "type": "tensor",
+   "x": 150,
+   "y": 104,
+   "w": 110,
+   "h": 24,
+   "kind": "frozen",
+   "label": "prefix K, V (layer ℓ)",
+   "dim": "from the frozen decoder"
+  },
+  {
+   "id": "attn",
+   "type": "block",
+   "kind": "train",
+   "x": 140,
+   "y": 240,
+   "w": 200,
+   "h": 126,
+   "label": [
+    "RMSNorm → attention",
+    "ℓ even: self-attention over",
+    "[prefix ; chunk]",
+    "ℓ odd: cross-attention to",
+    "the prefix K, V",
+    "1.84 M"
+   ],
+   "info": "SmolVLA's interleaving (self_attn_every_n_layers = 2)."
+  },
+  {
+   "id": "add1",
+   "type": "op",
+   "x": 372,
+   "y": 291,
+   "w": 24,
+   "label": [
+    "+"
+   ]
+  },
+  {
+   "id": "ephase",
+   "type": "tensor",
+   "x": 440,
+   "y": 104,
+   "w": 80,
+   "h": 22,
+   "kind": "side",
+   "label": "e_phase ∈ ℝ^{720}",
+   "dim": ""
+  },
+  {
+   "id": "cobj",
+   "type": "tensor",
+   "x": 560,
+   "y": 104,
+   "w": 80,
+   "h": 22,
+   "kind": "side",
+   "label": "c_obj ∈ ℝ^{720}",
+   "dim": ""
+  },
+  {
+   "id": "router",
+   "type": "block",
+   "kind": "train",
+   "x": 430,
+   "y": 248,
+   "w": 220,
+   "h": 110,
+   "label": [
+    "RMSNorm → router (fp32)",
+    "[h ; e_phase ; c_obj]",
+    "ℝ^{2160} → 4 logits",
+    "top-2 per action token",
+    "9 k parameters"
+   ],
+   "info": "Routes each action token by its content, the manipulation phase and the target object. Switch load-balancing loss, weight 0.01."
+  },
+  {
+   "id": "e1",
+   "type": "block",
+   "kind": "train",
+   "x": 700,
+   "y": 150,
+   "w": 160,
+   "h": 42,
+   "label": [
+    "expert 1  ✓",
+    "SwiGLU 720 → 2048 → 720"
+   ],
+   "size": 12,
+   "info": "Routed expert initialised from SmolVLA's FFN (up-cycling). Selected for this token."
+  },
+  {
+   "id": "e2",
+   "type": "block",
+   "kind": "mask",
+   "x": 700,
+   "y": 206,
+   "w": 160,
+   "h": 42,
+   "label": [
+    "expert 2",
+    "SwiGLU 720 → 2048 → 720"
+   ],
+   "size": 12,
+   "info": "Routed expert initialised from SmolVLA's FFN (up-cycling)."
+  },
+  {
+   "id": "e3",
+   "type": "block",
+   "kind": "train",
+   "x": 700,
+   "y": 262,
+   "w": 160,
+   "h": 42,
+   "label": [
+    "expert 3  ✓",
+    "SwiGLU 720 → 2048 → 720"
+   ],
+   "size": 12,
+   "info": "Routed expert initialised from SmolVLA's FFN (up-cycling). Selected for this token."
+  },
+  {
+   "id": "e4",
+   "type": "block",
+   "kind": "mask",
+   "x": 700,
+   "y": 318,
+   "w": 160,
+   "h": 42,
+   "label": [
+    "expert 4",
+    "SwiGLU 720 → 2048 → 720"
+   ],
+   "size": 12,
+   "info": "Routed expert initialised from SmolVLA's FFN (up-cycling)."
+  },
+  {
+   "id": "shared",
+   "type": "block",
+   "kind": "train",
+   "x": 700,
+   "y": 390,
+   "w": 160,
+   "h": 42,
+   "label": [
+    "shared expert",
+    "always on"
+   ],
+   "size": 12
+  },
+  {
+   "id": "mix",
+   "type": "op",
+   "x": 900,
+   "y": 287,
+   "w": 30,
+   "label": [
+    "Σ"
+   ],
+   "info": "Shared output + gate-weighted sum of the 2 selected experts."
+  },
+  {
+   "id": "add2",
+   "type": "op",
+   "x": 968,
+   "y": 289,
+   "w": 26,
+   "label": [
+    "+"
+   ]
+  },
+  {
+   "id": "hout",
+   "type": "tensor",
+   "x": 1020,
+   "y": 290,
+   "w": 70,
+   "h": 26,
+   "label": "h′",
+   "dim": "→ layer ℓ+1"
+  },
+  {
+   "id": "n_phase",
+   "type": "text",
+   "x": 36,
+   "y": 556,
+   "label": [
+    "e_phase: phase_proj of the decoder output at the CoT phase token when the trace is fed;",
+    "a learned null vector otherwise, which includes every inference step after the curriculum."
+   ],
+   "size": 12,
+   "anchor": "start",
+   "muted": true,
+   "mono": false,
+   "bold": false
+  },
+  {
+   "id": "n_obj",
+   "type": "text",
+   "x": 36,
+   "y": 600,
+   "label": [
+    "c_obj: the object projector's context over the K = 4 object tokens (Fig. 1 ②).",
+    "FFN per layer 22.1 M (4 routed + 1 shared); active per token: shared + 2 of 4 = 3× the SmolVLA FFN compute."
+   ],
+   "size": 12,
+   "anchor": "start",
+   "muted": true,
+   "mono": false,
+   "bold": false
+  }
+ ],
+ "edges": [
+  {
+   "from": "hin.r",
+   "to": "attn.l",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "kv.b",
+   "to": "attn.t",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "attn.r",
+   "to": "add1.l",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "hin.t",
+   "to": "add1.t",
+   "via": [
+    [
+     "71",
+     "214"
+    ],
+    [
+     "384",
+     "214"
+    ]
+   ],
+   "style": "dashed"
+  },
+  {
+   "from": "add1.r",
+   "to": "router.l",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "ephase.b",
+   "to": "router.t-60",
+   "style": "dashed"
+  },
+  {
+   "from": "cobj.b",
+   "to": "router.t+60",
+   "style": "dashed"
+  },
+  {
+   "from": "router.r",
+   "to": "e1.l",
+   "style": "solid",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "e1.r",
+   "to": "mix.l",
+   "style": "solid",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "router.r",
+   "to": "e2.l",
+   "style": "dashed"
+  },
+  {
+   "from": "e2.r",
+   "to": "mix.l",
+   "style": "dashed"
+  },
+  {
+   "from": "router.r",
+   "to": "e3.l",
+   "style": "solid",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "e3.r",
+   "to": "mix.l",
+   "style": "solid",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "router.r",
+   "to": "e4.l",
+   "style": "dashed"
+  },
+  {
+   "from": "e4.r",
+   "to": "mix.l",
+   "style": "dashed"
+  },
+  {
+   "from": "add1.b",
+   "to": "shared.l",
+   "via": [
+    [
+     "384",
+     "411"
+    ]
+   ],
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "shared.r",
+   "to": "mix.l",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "mix.r",
+   "to": "add2.l",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "add1.b",
+   "to": "add2.b",
+   "via": [
+    [
+     "384",
+     "480"
+    ],
+    [
+     "981",
+     "480"
+    ]
+   ],
+   "style": "dashed"
+  },
+  {
+   "from": "add2.r",
+   "to": "hout.l",
+   "tags": [
+    "main"
+   ]
+  }
+ ],
+ "title": "Fig. 2. One layer of the action expert: interleaved attention to the frozen prefix and a mixture-of-experts FFN routed on content, phase and object",
+ "legend": [
+  "train",
+  "frozen",
+  "tensor",
+  [
+   "side",
+   "router conditioning"
+  ],
+  [
+   "mask",
+   "expert not selected"
+  ]
+ ],
+ "caption": "All routed experts start as copies of SmolVLA's FFN; the dense variant (moe_variant = dense) is SmolVLA."
+}

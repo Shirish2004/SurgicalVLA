@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fig. 2. One layer of the action expert: interleaved attention to the frozen prefix and a mixture-of-experts FFN routed on content, phase and object</title>
+<style>
+:root{--bg:#fafafa;--card:#fff;--ink:#222;--sub:#666;--line:#ddd;--acc:#d17a22}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#111;--card:#1b1b1b;--ink:#e8e8e8;--sub:#aaa;--line:#333;--acc:#f0a050}}
+:root[data-theme="dark"]{--bg:#111;--card:#1b1b1b;--ink:#e8e8e8;--sub:#aaa;--line:#333;--acc:#f0a050}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 Helvetica,Arial,sans-serif}
+main{max-width:1280px;margin:0 auto;padding:16px}
+h1{font-size:18px;margin:4px 0 10px}
+.bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
+button{font:inherit;font-size:12px;padding:4px 10px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:6px;cursor:pointer}
+button.on{border-color:var(--acc);color:var(--acc)}
+.fig{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px;overflow:auto}
+.fig svg{display:block;max-width:100%;height:auto}
+.node.ia{cursor:pointer}
+.node.ia:hover > rect,.node.ia:hover > circle{filter:brightness(0.93);stroke-width:2.2}
+.dim{opacity:.18;transition:opacity .15s}
+.hl > rect,.hl > circle{stroke-width:2.6 !important}
+path.edge.hl{stroke-width:2.6 !important;stroke:var(--acc) !important}
+#tip{position:fixed;pointer-events:none;max-width:340px;background:var(--card);color:var(--ink);border:1px solid var(--line);
+ border-radius:8px;padding:8px 10px;font-size:12.5px;box-shadow:0 4px 18px rgba(0,0,0,.15);display:none;z-index:9}
+#tip b{display:block;margin-bottom:2px}#tip code{font-family:Menlo,Consolas,monospace;font-size:12px;color:var(--acc)}
+#tip .k{color:var(--sub);font-size:11px}
+#step{min-height:22px;color:var(--sub);margin:8px 2px 0}
+.cap{color:var(--sub);font-size:13px;margin:8px 2px}
+</style></head><body><main>
+<h1>Fig. 2. One layer of the action expert: interleaved attention to the frozen prefix and a mixture-of-experts FFN routed on content, phase and object</h1>
+<div class="bar" id="bar"></div>
+<div class="fig" id="fig"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 720" width="1120" height="720" font-family="Helvetica, Arial, sans-serif">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#222222"/></marker></defs>
+<rect width="1120" height="720" fill="#ffffff"/>
+<g id="panels">
+<rect x="16" y="52" width="1088" height="470" rx="12" fill="#fff6ec" stroke="#d17a22" stroke-width="1.6"/>
+<text x="30" y="73" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#d17a22">One action-expert layer ℓ  (× 16, d = 720)</text>
+</g>
+<text x="560.0" y="28.0" font-size="16" text-anchor="middle" fill="#222222" font-weight="bold">Fig. 2. One layer of the action expert: interleaved attention to the frozen prefix and a mixture-of-experts FFN routed on content, phase and object</text>
+<path id="e0" class="edge tag-main" d="M106.0,303.0 L140.0,303.0" fill="none" stroke="#222222" stroke-width="2.3" marker-end="url(#ar)"/>
+<path id="e1" class="edge tag-main" d="M205.0,128.0 L205.0,184.0 L240.0,184.0 L240.0,240.0" fill="none" stroke="#222222" stroke-width="2.3" marker-end="url(#ar)"/>
+<path id="e2" class="edge tag-main" d="M340.0,303.0 L356.0,303.0 L356.0,304.0 L372.0,304.0" fill="none" stroke="#222222" stroke-width="2.3" marker-end="url(#ar)"/>
+<path id="e3" class="edge " d="M71.0,290.0 L71.0,214.0 L384.0,214.0 L384.0,291.0" fill="none" stroke="#555555" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+<path id="e4" class="edge tag-main" d="M396.0,304.0 L413.0,304.0 L413.0,303.0 L430.0,303.0" fill="none" stroke="#222222" stroke-width="2.3" marker-end="url(#ar)"/>
+<path id="e5" class="edge " d="M480.0,126.0 L480.0,248.0" fill="none" stroke="#555555" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+<path id="e6" class="edge " d="M600.0,126.0 L600.0,248.0" fill="none" stroke="#555555" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+<path id="e7" class="edge tag-main" d="M650.0,303.0 L675.0,303.0 L675.0,171.0 L700.0,171.0" fill="none" stroke="#222222" stroke-width="2.3" marker-end="url(#ar)"/>
+<path id="e8" class="edge tag-main" d="M860.0,171.0 L880.0,171.0 L880.0,300.0 L900.0,300.0" fill="none" stroke="#222222" stroke-width="2.3" marker-end="url(#ar)"/>
+<path id="e9" class="edge " d="M650.0,303.0 L675.0,303.0 L675.0,227.0 L700.0,227.0" fill="none" stroke="#555555" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+<path id="e10" class="edge " d="M860.0,227.0 L880.0,227.0 L880.0,300.0 L900.0,300.0" fill="none" stroke="#555555" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+<path id="e11" class="edge tag-main" d="M650.0,303.0 L675.0,303.0 L675.0,283.0 L700.0,283.0" fill="none" stroke="#222222" stroke-width="2.3" marker-end="url(#ar)"/>
+<path id="e12" class="edge tag-main" d="M860.0,283.0 L880.0,283.0 L880.0,300.0 L900.0,300.0" fill="none" stroke="#222222" stroke-width="2.3" marker-end="url(#ar)"/>
+<path id="e13" class="edge " d="M650.0,303.0 L675.0,303.0 L675.0,339.0 L700.0,339.0" fill="none" stroke="#555555" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+<path id="e14" class="edge " d="M860.0,339.0 L880.0,339.0 L880.0,300.0 L900.0,300.0" fill="none" stroke="#555555" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+<path id="e15" class="edge tag-main" d="M384.0,317.0 L384.0,411.0 L700.0,411.0" fill="none" stroke="#222222" stroke-width="2.3" marker-end="url(#ar)"/>
+<path id="e16" class="edge tag-main" d="M860.0,411.0 L880.0,411.0 L880.0,300.0 L900.0,300.0" fill="none" stroke="#222222" stroke-width="2.3" marker-end="url(#ar)"/>
+<path id="e17" class="edge tag-main" d="M930.0,300.0 L949.0,300.0 L949.0,302.0 L968.0,302.0" fill="none" stroke="#222222" stroke-width="2.3" marker-end="url(#ar)"/>
+<path id="e18" class="edge " d="M384.0,317.0 L384.0,480.0 L981.0,480.0 L981.0,315.0" fill="none" stroke="#555555" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+<path id="e19" class="edge tag-main" d="M994.0,302.0 L1007.0,302.0 L1007.0,303.0 L1020.0,303.0" fill="none" stroke="#222222" stroke-width="2.3" marker-end="url(#ar)"/>
+<g id="hin" class="node  ia" data-kind="tensor">
+<title>h</title>
+<rect x="36.0" y="290.0" width="70.0" height="26.0" fill="#eeeeee" stroke="#777777" stroke-width="1.1"/>
+<text x="71.0" y="283.0" font-size="13" text-anchor="middle" fill="#222222" font-family="Menlo, Consolas, monospace">h</text>
+<text x="71.0" y="330.0" font-size="11" text-anchor="middle" fill="#555555">50 × 720</text>
+</g>
+<g id="kv" class="node  ia" data-kind="frozen">
+<title>prefix K, V (layer ℓ)</title>
+<rect x="150.0" y="104.0" width="110.0" height="24.0" fill="#dcebf7" stroke="#3f74a8" stroke-width="1.1"/>
+<text x="205.0" y="97.0" font-size="13" text-anchor="middle" fill="#222222" font-family="Menlo, Consolas, monospace">prefix K, V (layer ℓ)</text>
+<text x="205.0" y="142.0" font-size="11" text-anchor="middle" fill="#555555">from the frozen decoder</text>
+</g>
+<g id="attn" class="node  ia" data-kind="train">
+<title>RMSNorm → attention · SmolVLA&#x27;s interleaving (self_attn_every_n_layers = 2).</title>
+<rect x="140.0" y="240.0" width="200.0" height="126.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<text x="240.0" y="265.1" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">RMSNorm → attention</text>
+<text x="240.0" y="281.5" font-size="11.5" text-anchor="middle" fill="#555555">ℓ even: self-attention over</text>
+<text x="240.0" y="298.5" font-size="11.5" text-anchor="middle" fill="#555555">[prefix ; chunk]</text>
+<text x="240.0" y="315.5" font-size="11.5" text-anchor="middle" fill="#555555">ℓ odd: cross-attention to</text>
+<text x="240.0" y="332.5" font-size="11.5" text-anchor="middle" fill="#555555">the prefix K, V</text>
+<text x="240.0" y="349.5" font-size="11.5" text-anchor="middle" fill="#555555">1.84 M</text>
+</g>
+<g id="add1" class="node  ia" data-kind="op">
+<title>+</title>
+<circle cx="384.0" cy="303.0" r="12.0" fill="#ffffff" stroke="#444444" stroke-width="1.4"/>
+<text x="384.0" y="307.7" font-size="15" text-anchor="middle" fill="#222222">+</text>
+</g>
+<g id="ephase" class="node  ia" data-kind="side">
+<title>e_phase ∈ ℝ720</title>
+<rect x="440.0" y="104.0" width="80.0" height="22.0" fill="#e6d9f2" stroke="#7a52a0" stroke-width="1.1"/>
+<text x="480.0" y="97.0" font-size="13" text-anchor="middle" fill="#222222" font-family="Menlo, Consolas, monospace">e_phase ∈ ℝ<tspan baseline-shift="super" font-size="70%">720</tspan></text>
+</g>
+<g id="cobj" class="node  ia" data-kind="side">
+<title>c_obj ∈ ℝ720</title>
+<rect x="560.0" y="104.0" width="80.0" height="22.0" fill="#e6d9f2" stroke="#7a52a0" stroke-width="1.1"/>
+<text x="600.0" y="97.0" font-size="13" text-anchor="middle" fill="#222222" font-family="Menlo, Consolas, monospace">c_obj ∈ ℝ<tspan baseline-shift="super" font-size="70%">720</tspan></text>
+</g>
+<g id="router" class="node  ia" data-kind="train">
+<title>RMSNorm → router (fp32) · Routes each action token by its content, the manipulation phase and the target object. Switch load-balancing loss, weight 0.01.</title>
+<rect x="430.0" y="248.0" width="220.0" height="110.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<text x="540.0" y="273.6" font-size="13" text-anchor="middle" fill="#222222" font-weight="bold">RMSNorm → router (fp32)</text>
+<text x="540.0" y="290.0" font-size="11.5" text-anchor="middle" fill="#555555">[h ; e_phase ; c_obj]</text>
+<text x="540.0" y="307.0" font-size="11.5" text-anchor="middle" fill="#555555">ℝ<tspan baseline-shift="super" font-size="70%">2160</tspan> → 4 logits</text>
+<text x="540.0" y="324.0" font-size="11.5" text-anchor="middle" fill="#555555">top-2 per action token</text>
+<text x="540.0" y="341.0" font-size="11.5" text-anchor="middle" fill="#555555">9 k parameters</text>
+</g>
+<g id="e1" class="node  ia" data-kind="train">
+<title>expert 1  ✓ · Routed expert initialised from SmolVLA&#x27;s FFN (up-cycling). Selected for this token.</title>
+<rect x="700.0" y="150.0" width="160.0" height="42.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<text x="780.0" y="167.2" font-size="12" text-anchor="middle" fill="#222222" font-weight="bold">expert 1  ✓</text>
+<text x="780.0" y="182.7" font-size="10.5" text-anchor="middle" fill="#555555">SwiGLU 720 → 2048 → 720</text>
+</g>
+<g id="e2" class="node  ia" data-kind="mask">
+<title>expert 2 · Routed expert initialised from SmolVLA&#x27;s FFN (up-cycling).</title>
+<rect x="700.0" y="206.0" width="160.0" height="42.0" rx="7" fill="#d9d9d9" stroke="#9a9a9a" stroke-width="1.4"/>
+<text x="780.0" y="223.2" font-size="12" text-anchor="middle" fill="#222222" font-weight="bold">expert 2</text>
+<text x="780.0" y="238.7" font-size="10.5" text-anchor="middle" fill="#555555">SwiGLU 720 → 2048 → 720</text>
+</g>
+<g id="e3" class="node  ia" data-kind="train">
+<title>expert 3  ✓ · Routed expert initialised from SmolVLA&#x27;s FFN (up-cycling). Selected for this token.</title>
+<rect x="700.0" y="262.0" width="160.0" height="42.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<text x="780.0" y="279.2" font-size="12" text-anchor="middle" fill="#222222" font-weight="bold">expert 3  ✓</text>
+<text x="780.0" y="294.7" font-size="10.5" text-anchor="middle" fill="#555555">SwiGLU 720 → 2048 → 720</text>
+</g>
+<g id="e4" class="node  ia" data-kind="mask">
+<title>expert 4 · Routed expert initialised from SmolVLA&#x27;s FFN (up-cycling).</title>
+<rect x="700.0" y="318.0" width="160.0" height="42.0" rx="7" fill="#d9d9d9" stroke="#9a9a9a" stroke-width="1.4"/>
+<text x="780.0" y="335.2" font-size="12" text-anchor="middle" fill="#222222" font-weight="bold">expert 4</text>
+<text x="780.0" y="350.7" font-size="10.5" text-anchor="middle" fill="#555555">SwiGLU 720 → 2048 → 720</text>
+</g>
+<g id="shared" class="node  ia" data-kind="train">
+<title>shared expert</title>
+<rect x="700.0" y="390.0" width="160.0" height="42.0" rx="7" fill="#fde3c8" stroke="#d17a22" stroke-width="1.4"/>
+<text x="780.0" y="407.2" font-size="12" text-anchor="middle" fill="#222222" font-weight="bold">shared expert</text>
+<text x="780.0" y="422.7" font-size="10.5" text-anchor="middle" fill="#555555">always on</text>
+</g>
+<g id="mix" class="node  ia" data-kind="op">
+<title>Σ · Shared output + gate-weighted sum of the 2 selected experts.</title>
+<circle cx="915.0" cy="302.0" r="15.0" fill="#ffffff" stroke="#444444" stroke-width="1.4"/>
+<text x="915.0" y="306.7" font-size="15" text-anchor="middle" fill="#222222">Σ</text>
+</g>
+<g id="add2" class="node  ia" data-kind="op">
+<title>+</title>
+<circle cx="981.0" cy="302.0" r="13.0" fill="#ffffff" stroke="#444444" stroke-width="1.4"/>
+<text x="981.0" y="306.7" font-size="15" text-anchor="middle" fill="#222222">+</text>
+</g>
+<g id="hout" class="node  ia" data-kind="tensor">
+<title>h′</title>
+<rect x="1020.0" y="290.0" width="70.0" height="26.0" fill="#eeeeee" stroke="#777777" stroke-width="1.1"/>
+<text x="1055.0" y="283.0" font-size="13" text-anchor="middle" fill="#222222" font-family="Menlo, Consolas, monospace">h′</text>
+<text x="1055.0" y="330.0" font-size="11" text-anchor="middle" fill="#555555">→ layer ℓ+1</text>
+</g>
+<g id="n_phase" class="node " data-kind="plain">
+<text x="36.0" y="556.0" font-size="12" text-anchor="start" fill="#555555">e_phase: phase_proj of the decoder output at the CoT phase token when the trace is fed;</text>
+<text x="36.0" y="573.0" font-size="12" text-anchor="start" fill="#555555">a learned null vector otherwise, which includes every inference step after the curriculum.</text>
+</g>
+<g id="n_obj" class="node " data-kind="plain">
+<text x="36.0" y="600.0" font-size="12" text-anchor="start" fill="#555555">c_obj: the object projector's context over the K = 4 object tokens (Fig. 1 ②).</text>
+<text x="36.0" y="617.0" font-size="12" text-anchor="start" fill="#555555">FFN per layer 22.1 M (4 routed + 1 shared); active per token: shared + 2 of 4 = 3× the SmolVLA FFN compute.</text>
+</g>
+<rect x="20" y="696" width="14" height="12" fill="#fde3c8" stroke="#d17a22"/>
+<text x="40.0" y="706.0" font-size="11" text-anchor="start" fill="#555555">trainable</text>
+<rect x="112.5" y="696" width="14" height="12" fill="#dcebf7" stroke="#3f74a8"/>
+<text x="132.5" y="706.0" font-size="11" text-anchor="start" fill="#555555">frozen</text>
+<rect x="185.5" y="696" width="14" height="12" fill="#eeeeee" stroke="#777777"/>
+<text x="205.5" y="706.0" font-size="11" text-anchor="start" fill="#555555">tensor</text>
+<rect x="258.5" y="696" width="14" height="12" fill="#e6d9f2" stroke="#7a52a0"/>
+<text x="278.5" y="706.0" font-size="11" text-anchor="start" fill="#555555">router conditioning</text>
+<rect x="416.0" y="696" width="14" height="12" fill="#d9d9d9" stroke="#9a9a9a"/>
+<text x="436.0" y="706.0" font-size="11" text-anchor="start" fill="#555555">expert not selected</text>
+<text x="560.0" y="684.0" font-size="12" text-anchor="middle" fill="#555555" font-style="italic">All routed experts start as copies of SmolVLA's FFN; the dense variant (moe_variant = dense) is SmolVLA.</text>
+<g id="extras" pointer-events="none">
+
+
+</g>
+</svg>
+</div>
+<div id="step"></div>
+<p class="cap">Hover a block for shapes and details · click to trace its data flow · click empty space to reset.</p>
+</main><div id="tip"></div>
+<script>
+const META={"hin": {"title": "h", "shape": "", "info": "", "params": "", "kind": "tensor"}, "kv": {"title": "prefix K, V (layer ℓ)", "shape": "", "info": "", "params": "", "kind": "frozen"}, "attn": {"title": "RMSNorm → attention", "shape": "", "info": "SmolVLA's interleaving (self_attn_every_n_layers = 2).", "params": "", "kind": "train"}, "add1": {"title": "+", "shape": "", "info": "", "params": "", "kind": "op"}, "ephase": {"title": "e_phase ∈ ℝ720", "shape": "", "info": "", "params": "", "kind": "side"}, "cobj": {"title": "c_obj ∈ ℝ720", "shape": "", "info": "", "params": "", "kind": "side"}, "router": {"title": "RMSNorm → router (fp32)", "shape": "", "info": "Routes each action token by its content, the manipulation phase and the target object. Switch load-balancing loss, weight 0.01.", "params": "", "kind": "train"}, "e1": {"title": "expert 1  ✓", "shape": "", "info": "Routed expert initialised from SmolVLA's FFN (up-cycling). Selected for this token.", "params": "", "kind": "train"}, "e2": {"title": "expert 2", "shape": "", "info": "Routed expert initialised from SmolVLA's FFN (up-cycling).", "params": "", "kind": "mask"}, "e3": {"title": "expert 3  ✓", "shape": "", "info": "Routed expert initialised from SmolVLA's FFN (up-cycling). Selected for this token.", "params": "", "kind": "train"}, "e4": {"title": "expert 4", "shape": "", "info": "Routed expert initialised from SmolVLA's FFN (up-cycling).", "params": "", "kind": "mask"}, "shared": {"title": "shared expert", "shape": "", "info": "", "params": "", "kind": "train"}, "mix": {"title": "Σ", "shape": "", "info": "Shared output + gate-weighted sum of the 2 selected experts.", "params": "", "kind": "op"}, "add2": {"title": "+", "shape": "", "info": "", "params": "", "kind": "op"}, "hout": {"title": "h′", "shape": "", "info": "", "params": "", "kind": "tensor"}}, EDGES=[{"id": "e0", "from": "hin", "to": "attn"}, {"id": "e1", "from": "kv", "to": "attn"}, {"id": "e2", "from": "attn", "to": "add1"}, {"id": "e3", "from": "hin", "to": "add1"}, {"id": "e4", "from": "add1", "to": "router"}, {"id": "e5", "from": "ephase", "to": "router"}, {"id": "e6", "from": "cobj", "to": "router"}, {"id": "e7", "from": "router", "to": "e1"}, {"id": "e8", "from": "e1", "to": "mix"}, {"id": "e9", "from": "router", "to": "e2"}, {"id": "e10", "from": "e2", "to": "mix"}, {"id": "e11", "from": "router", "to": "e3"}, {"id": "e12", "from": "e3", "to": "mix"}, {"id": "e13", "from": "router", "to": "e4"}, {"id": "e14", "from": "e4", "to": "mix"}, {"id": "e15", "from": "add1", "to": "shared"}, {"id": "e16", "from": "shared", "to": "mix"}, {"id": "e17", "from": "mix", "to": "add2"}, {"id": "e18", "from": "add1", "to": "add2"}, {"id": "e19", "from": "add2", "to": "hout"}], TAGS=[], STEPS=[];
+const svg=document.querySelector('#fig svg'), tip=document.getElementById('tip'), bar=document.getElementById('bar');
+const $=id=>svg.getElementById?svg.getElementById(id):document.getElementById(id);
+svg.querySelectorAll('title').forEach(t=>t.remove());
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function fmt(s){return esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/_\{([^}]+)\}/g,'<sub>$1</sub>').replace(/\^\{([^}]+)\}/g,'<sup>$1</sup>')}
+svg.querySelectorAll('.node.ia').forEach(g=>{
+  const m=META[g.id]; if(!m) return;
+  g.addEventListener('mousemove',ev=>{
+    tip.innerHTML='<b>'+fmt(m.title)+'</b>'+(m.shape?'<div><code>'+fmt(m.shape)+'</code></div>':'')+
+      (m.info?'<div>'+fmt(m.info)+'</div>':'')+(m.params?'<div class="k">params: '+fmt(m.params)+'</div>':'')+
+      '<div class="k">'+m.kind+'</div>';
+    tip.style.display='block';
+    const x=Math.min(ev.clientX+14,innerWidth-360), y=Math.min(ev.clientY+14,innerHeight-tip.offsetHeight-10);
+    tip.style.left=x+'px'; tip.style.top=y+'px';});
+  g.addEventListener('mouseleave',()=>tip.style.display='none');
+  g.addEventListener('click',ev=>{ev.stopPropagation();trace(g.id)});
+});
+function reset(){svg.querySelectorAll('.dim,.hl').forEach(e=>e.classList.remove('dim','hl'));document.getElementById('step').textContent=''}
+function highlight(nodes,edges){
+  svg.querySelectorAll('.node,.edge').forEach(e=>e.classList.add('dim'));
+  nodes.forEach(n=>{const e=$(n); if(e){e.classList.remove('dim');e.classList.add('hl')}});
+  edges.forEach(n=>{const e=$(n); if(e){e.classList.remove('dim');e.classList.add('hl')}});}
+function trace(id){
+  const nodes=new Set([id]),edges=new Set();
+  for(const dir of ['from','to']){const other=dir==='from'?'to':'from';let front=[id];
+    while(front.length){const nx=[];for(const n of front)for(const e of EDGES)if(e[dir]===n&&!edges.has(e.id)){edges.add(e.id);
+      if(!nodes.has(e[other])){nodes.add(e[other]);nx.push(e[other])}}front=nx}}
+  highlight(nodes,edges);}
+document.getElementById('fig').addEventListener('click',reset);
+function btn(label,fn){const b=document.createElement('button');b.textContent=label;b.onclick=()=>fn(b);bar.appendChild(b);return b}
+TAGS.forEach(t=>btn(t.label||t.tag,b=>{const on=!b.classList.contains('on');bar.querySelectorAll('button.tag').forEach(x=>x.classList.remove('on'));
+  reset(); if(on){b.classList.add('on');const ns=[...svg.querySelectorAll('.node.tag-'+t.tag)].map(e=>e.id),
+  es=[...svg.querySelectorAll('.edge.tag-'+t.tag)].map(e=>e.id);highlight(ns,es);document.getElementById('step').textContent=t.info||''}}).classList.add('tag'));
+if(STEPS.length){let k=-1;const show=()=>{reset();if(k<0)return;const s=STEPS[k];highlight(s.nodes||[],
+  EDGES.filter(e=>(s.nodes||[]).includes(e.from)&&(s.nodes||[]).includes(e.to)).map(e=>e.id).concat(s.edges||[]));
+  document.getElementById('step').innerHTML='<b>'+(k+1)+'/'+STEPS.length+'</b> '+fmt(s.text||'')};
+  btn('◀ step',()=>{k=Math.max(-1,k-1);show()});btn('step ▶',()=>{k=Math.min(STEPS.length-1,k+1);show()});}
+btn('SVG ⤓',()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([svg.outerHTML],{type:'image/svg+xml'}));
+  a.download='surgicalvla_expert_layer.svg';a.click()});
+btn('PNG ⤓',()=>{const vb=svg.viewBox.baseVal,c=document.createElement('canvas');c.width=vb.width*2;c.height=vb.height*2;
+  const img=new Image();img.onload=()=>{c.getContext('2d').drawImage(img,0,0,c.width,c.height);c.toBlob(b=>{const a=document.createElement('a');
+  a.href=URL.createObjectURL(b);a.download='surgicalvla_expert_layer.png';a.click()})};
+  img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg.outerHTML)});
+</script></body></html>

@@ -1,0 +1,1045 @@
+{
+ "name": "surgicalvla_training",
+ "width": 1940,
+ "height": 880,
+ "nodes": [
+  {
+   "id": "img_third",
+   "type": "block",
+   "kind": "plain",
+   "x": 40,
+   "y": 90,
+   "w": 110,
+   "h": 110,
+   "label": [],
+   "rx": 2,
+   "title": "demonstration, frontal camera",
+   "info": ""
+  },
+  {
+   "id": "cap_img_third",
+   "type": "text",
+   "x": 95.0,
+   "y": 214,
+   "label": [
+    "demonstration, frontal camera"
+   ],
+   "size": 11,
+   "anchor": "middle",
+   "muted": true,
+   "mono": false,
+   "bold": false
+  },
+  {
+   "id": "instr",
+   "type": "block",
+   "kind": "plain",
+   "x": 170,
+   "y": 96,
+   "w": 240,
+   "h": 56,
+   "label": [
+    "instruction",
+    "“pick up the black bowl next to …”"
+   ],
+   "size": 12
+  },
+  {
+   "id": "phrase",
+   "type": "block",
+   "kind": "frozen",
+   "x": 440,
+   "y": 90,
+   "w": 240,
+   "h": 70,
+   "label": [
+    "target phrase",
+    "rule + grounded SmolVLM2 check",
+    "→ “black bowl”"
+   ],
+   "info": "Rule: the object of the first manipulation verb; SmolVLM2 answers from the first frame; the rule wins on disagreement."
+  },
+  {
+   "id": "acts",
+   "type": "tensor",
+   "x": 560,
+   "y": 250,
+   "w": 110,
+   "h": 22,
+   "label": "",
+   "dim": "demo actions a_{1:T}"
+  },
+  {
+   "id": "sam",
+   "type": "block",
+   "kind": "frozen",
+   "x": 170,
+   "y": 230,
+   "w": 330,
+   "h": 64,
+   "label": [
+    "SAM 3 video tracking",
+    "target and end-effector masks, boxes, scores"
+   ]
+  },
+  {
+   "id": "dino",
+   "type": "block",
+   "kind": "frozen",
+   "x": 40,
+   "y": 340,
+   "w": 150,
+   "h": 56,
+   "label": [
+    "DINOv2-S",
+    "target feature"
+   ]
+  },
+  {
+   "id": "depth",
+   "type": "block",
+   "kind": "frozen",
+   "x": 205,
+   "y": 340,
+   "w": 150,
+   "h": 56,
+   "label": [
+    "Depth Anything V2-S",
+    "gripper-relative offset"
+   ]
+  },
+  {
+   "id": "tap",
+   "type": "block",
+   "kind": "frozen",
+   "x": 370,
+   "y": 340,
+   "w": 150,
+   "h": 56,
+   "label": [
+    "TAPNext++",
+    "point tracks"
+   ]
+  },
+  {
+   "id": "events",
+   "type": "block",
+   "kind": "plain",
+   "x": 535,
+   "y": 340,
+   "w": 150,
+   "h": 56,
+   "label": [
+    "gripper events",
+    "+ speed minima → phases"
+   ]
+  },
+  {
+   "id": "cache",
+   "type": "block",
+   "kind": "target",
+   "x": 40,
+   "y": 446,
+   "w": 645,
+   "h": 112,
+   "label": [
+    "feature cache (Parquet, keyed by episode and frame)",
+    "inputs: K = 4 object descriptors on every frame, from frame t only",
+    "targets: every 4th frame, may use the whole episode, each with a confidence",
+    "CoT traces written from the labels: phase · object · motion",
+    "the manifest pins model hashes, prompts, thresholds, strides and camera"
+   ]
+  },
+  {
+   "id": "img_targets",
+   "type": "block",
+   "kind": "plain",
+   "x": 40,
+   "y": 590,
+   "w": 116,
+   "h": 116,
+   "label": [],
+   "rx": 2,
+   "title": "target mask · tracks · gripper",
+   "info": ""
+  },
+  {
+   "id": "cap_img_targets",
+   "type": "text",
+   "x": 98.0,
+   "y": 720,
+   "label": [
+    "target mask · tracks · gripper"
+   ],
+   "size": 11,
+   "anchor": "middle",
+   "muted": true,
+   "mono": false,
+   "bold": false
+  },
+  {
+   "id": "trace",
+   "type": "text",
+   "x": 176,
+   "y": 612,
+   "label": [
+    "trace at t = 36:",
+    "<cot> phase: approach | object: black bowl | motion: down </cot>"
+   ],
+   "size": 11,
+   "anchor": "start",
+   "muted": false,
+   "mono": false,
+   "bold": false
+  },
+  {
+   "id": "lab_n",
+   "type": "text",
+   "x": 176,
+   "y": 668,
+   "label": [
+    "No human labels. Simulator ground truth only validates the",
+    "pseudo-labels and drives the oracle ablation."
+   ],
+   "size": 11,
+   "anchor": "start",
+   "muted": true,
+   "mono": false,
+   "bold": false
+  },
+  {
+   "id": "policy",
+   "type": "block",
+   "kind": "train",
+   "x": 746,
+   "y": 92,
+   "w": 690,
+   "h": 74,
+   "label": [
+    "SurgicalVLA (Fig. 1), one forward pass per sample",
+    "inputs: cameras, ℓ, s_t, cached object descriptors, CoT trace (curriculum), noisy chunk x_τ"
+   ],
+   "info": "Frozen VLM; the action expert, object projector, latent queries and heads are trained."
+  },
+  {
+   "id": "h_aux",
+   "type": "block",
+   "kind": "train",
+   "x": 852,
+   "y": 212,
+   "w": 108,
+   "h": 50,
+   "label": [
+    "aux heads",
+    "mean expert out"
+   ],
+   "size": 12
+  },
+  {
+   "id": "h_cot",
+   "type": "block",
+   "kind": "train",
+   "x": 968,
+   "y": 212,
+   "w": 108,
+   "h": 50,
+   "label": [
+    "LM head",
+    "CoT-token out"
+   ],
+   "size": 12
+  },
+  {
+   "id": "h_ph",
+   "type": "block",
+   "kind": "train",
+   "x": 1084,
+   "y": 212,
+   "w": 108,
+   "h": 50,
+   "label": [
+    "phase head",
+    "e_phase / pool"
+   ],
+   "size": 12
+  },
+  {
+   "id": "h_lat",
+   "type": "block",
+   "kind": "train",
+   "x": 1200,
+   "y": 212,
+   "w": 108,
+   "h": 50,
+   "label": [
+    "predictor",
+    "latent-query out"
+   ],
+   "size": 12
+  },
+  {
+   "id": "l_fm",
+   "type": "block",
+   "kind": "loss",
+   "x": 736,
+   "y": 300,
+   "w": 108,
+   "h": 50,
+   "label": [
+    "ℒ_{FM}",
+    "‖v_{θ} − (ε − a)‖² · 1"
+   ],
+   "size": 12
+  },
+  {
+   "id": "l_aux",
+   "type": "block",
+   "kind": "loss",
+   "x": 852,
+   "y": 300,
+   "w": 108,
+   "h": 50,
+   "label": [
+    "ℒ_{aux}",
+    "0.1 ×3, 0.02 (rel)"
+   ],
+   "size": 12
+  },
+  {
+   "id": "l_cot",
+   "type": "block",
+   "kind": "loss",
+   "x": 968,
+   "y": 300,
+   "w": 108,
+   "h": 50,
+   "label": [
+    "ℒ_{CoT}",
+    "token CE · 0.1"
+   ],
+   "size": 12
+  },
+  {
+   "id": "l_ph",
+   "type": "block",
+   "kind": "loss",
+   "x": 1084,
+   "y": 300,
+   "w": 108,
+   "h": 50,
+   "label": [
+    "ℒ_{phase}",
+    "CE · 0.1"
+   ],
+   "size": 12
+  },
+  {
+   "id": "l_lat",
+   "type": "block",
+   "kind": "loss",
+   "x": 1200,
+   "y": 300,
+   "w": 108,
+   "h": 50,
+   "label": [
+    "ℒ_{latent}",
+    "1 − cos · 0.1"
+   ],
+   "size": 12
+  },
+  {
+   "id": "l_bal",
+   "type": "block",
+   "kind": "loss",
+   "x": 1316,
+   "y": 300,
+   "w": 108,
+   "h": 50,
+   "label": [
+    "ℒ_{balance}",
+    "Switch · 0.01"
+   ],
+   "size": 12
+  },
+  {
+   "id": "t_fm",
+   "type": "block",
+   "kind": "target",
+   "x": 740,
+   "y": 388,
+   "w": 100,
+   "h": 44,
+   "label": [
+    "ε − a",
+    "demo chunk"
+   ],
+   "size": 12
+  },
+  {
+   "id": "t_aux",
+   "type": "block",
+   "kind": "target",
+   "x": 856,
+   "y": 388,
+   "w": 100,
+   "h": 44,
+   "label": [
+    "feat · motion",
+    "track · rel"
+   ],
+   "size": 12
+  },
+  {
+   "id": "t_cot",
+   "type": "block",
+   "kind": "target",
+   "x": 972,
+   "y": 388,
+   "w": 100,
+   "h": 44,
+   "label": [
+    "trace",
+    "tokens"
+   ],
+   "size": 12
+  },
+  {
+   "id": "t_ph",
+   "type": "block",
+   "kind": "target",
+   "x": 1088,
+   "y": 388,
+   "w": 100,
+   "h": 44,
+   "label": [
+    "phase",
+    "labels"
+   ],
+   "size": 12
+  },
+  {
+   "id": "t_lat",
+   "type": "block",
+   "kind": "target",
+   "x": 1204,
+   "y": 388,
+   "w": 100,
+   "h": 44,
+   "label": [
+    "z_{t+10}",
+    "stop-grad"
+   ],
+   "size": 12
+  },
+  {
+   "id": "enc",
+   "type": "block",
+   "kind": "frozen",
+   "x": 1200,
+   "y": 470,
+   "w": 108,
+   "h": 50,
+   "label": [
+    "vision encoder",
+    "frozen"
+   ],
+   "size": 12,
+   "info": "With the vision encoder frozen the target encoder is the encoder itself; an EMA copy (decay 0.99) exists only when it trains."
+  },
+  {
+   "id": "img_future",
+   "type": "block",
+   "kind": "plain",
+   "x": 1214,
+   "y": 548,
+   "w": 80,
+   "h": 80,
+   "label": [],
+   "rx": 2,
+   "title": "o_{t+10} (1 s ahead)",
+   "info": ""
+  },
+  {
+   "id": "cap_img_future",
+   "type": "text",
+   "x": 1254.0,
+   "y": 642,
+   "label": [
+    "o_{t+10} (1 s ahead)"
+   ],
+   "size": 11,
+   "anchor": "middle",
+   "muted": true,
+   "mono": false,
+   "bold": false
+  },
+  {
+   "id": "sft_total",
+   "type": "text",
+   "x": 746,
+   "y": 490,
+   "label": [
+    "ℒ_{SFT} = ℒ_{FM} + Σ_{k} w_{k} ℒ_{aux,k} + 0.1 ℒ_{CoT}",
+    "          + 0.1 ℒ_{phase} + 0.1 ℒ_{latent} + 0.01 ℒ_{balance}"
+   ],
+   "size": 13,
+   "anchor": "start",
+   "muted": false,
+   "mono": false,
+   "bold": false
+  },
+  {
+   "id": "sft_n",
+   "type": "text",
+   "x": 746,
+   "y": 548,
+   "label": [
+    "Auxiliary losses read the action expert (aux_source = expert),",
+    "so they shape features the policy acts on while the VLM is frozen.",
+    "Batch 24 × 4 accumulation; seed-fixed episode split."
+   ],
+   "size": 11,
+   "anchor": "start",
+   "muted": true,
+   "mono": false,
+   "bold": false
+  },
+  {
+   "id": "cur_t",
+   "type": "text",
+   "x": 746,
+   "y": 626,
+   "label": [
+    "explicit → latent curriculum"
+   ],
+   "size": 12,
+   "anchor": "start",
+   "muted": false,
+   "mono": false,
+   "bold": true
+  },
+  {
+   "id": "pi",
+   "type": "block",
+   "kind": "train",
+   "x": 1500,
+   "y": 96,
+   "w": 190,
+   "h": 60,
+   "label": [
+    "policy π_θ",
+    "starts from the SFT model"
+   ]
+  },
+  {
+   "id": "ref",
+   "type": "block",
+   "kind": "frozen",
+   "x": 1710,
+   "y": 478,
+   "w": 190,
+   "h": 44,
+   "label": [
+    "reference π_SFT",
+    "frozen copy"
+   ]
+  },
+  {
+   "id": "sim",
+   "type": "block",
+   "kind": "plain",
+   "x": 1500,
+   "y": 212,
+   "w": 190,
+   "h": 78,
+   "label": [
+    "LIBERO simulator",
+    "fresh seeded layouts;",
+    "never the 50 evaluation",
+    "init states"
+   ]
+  },
+  {
+   "id": "roll",
+   "type": "block",
+   "kind": "plain",
+   "x": 1710,
+   "y": 212,
+   "w": 190,
+   "h": 78,
+   "label": [
+    "G = 8 rollouts per start",
+    "SDE sampling, 5 steps,",
+    "learned σ ∈ [0.01, 0.15]",
+    "(ReinFlow noise head)"
+   ]
+  },
+  {
+   "id": "rew",
+   "type": "block",
+   "kind": "target",
+   "x": 1710,
+   "y": 330,
+   "w": 190,
+   "h": 44,
+   "label": [
+    "r_{i} = 1[success]"
+   ]
+  },
+  {
+   "id": "adv",
+   "type": "block",
+   "kind": "plain",
+   "x": 1710,
+   "y": 410,
+   "w": 190,
+   "h": 50,
+   "label": [
+    "A_{i} = (r_{i} − mean) / std",
+    "within the group"
+   ]
+  },
+  {
+   "id": "lrl",
+   "type": "block",
+   "kind": "loss",
+   "x": 1500,
+   "y": 330,
+   "w": 190,
+   "h": 130,
+   "label": [
+    "ℒ_{RL}",
+    "−min(ρA, clip(ρ, 0.8, 1.2) A)",
+    "+ 0.01 · KL_{k3}(π_θ ‖ π_SFT)",
+    "− 0.001 · entropy",
+    "ρ from exact SDE",
+    "transition log-probs"
+   ]
+  },
+  {
+   "id": "modes",
+   "type": "block",
+   "kind": "plain",
+   "x": 1500,
+   "y": 556,
+   "w": 400,
+   "h": 118,
+   "label": [
+    "training.mode",
+    "sequential (default): RL updates only",
+    "joint: + λ_t ℒ_{FM} on demo batches, λ 1 → 0.1 (cosine)",
+    "interleaved: FM steps between RL updates",
+    "200 iterations · lr 1e-6 · chunks of 50 executed"
+   ],
+   "size": 12
+  },
+  {
+   "id": "rl_n",
+   "type": "text",
+   "x": 1500,
+   "y": 708,
+   "label": [
+    "Evaluation always uses the deterministic ODE (10 Euler steps)",
+    "and the model saved after the fixed final iteration."
+   ],
+   "size": 11,
+   "anchor": "start",
+   "muted": true,
+   "mono": false,
+   "bold": false
+  }
+ ],
+ "edges": [
+  {
+   "from": "img_third.r",
+   "to": "instr.l",
+   "via": [
+    [
+     "160",
+     "145"
+    ],
+    [
+     "160",
+     "124"
+    ]
+   ]
+  },
+  {
+   "from": "instr.r",
+   "to": "phrase.l"
+  },
+  {
+   "from": "phrase.b",
+   "to": "sam.t+100",
+   "via": [
+    [
+     "560",
+     "200"
+    ],
+    [
+     "435",
+     "200"
+    ]
+   ]
+  },
+  {
+   "from": "img_third.b",
+   "to": "sam.l",
+   "via": [
+    [
+     "95",
+     "262"
+    ]
+   ]
+  },
+  {
+   "from": "sam.b-140",
+   "to": "dino.t",
+   "via": [
+    [
+     "195",
+     "318"
+    ],
+    [
+     "115",
+     "318"
+    ]
+   ]
+  },
+  {
+   "from": "sam.b-30",
+   "to": "depth.t",
+   "via": [
+    [
+     "305",
+     "318"
+    ],
+    [
+     "280",
+     "318"
+    ]
+   ]
+  },
+  {
+   "from": "sam.b+110",
+   "to": "tap.t",
+   "via": [
+    [
+     "445",
+     "318"
+    ]
+   ]
+  },
+  {
+   "from": "acts.b",
+   "to": "events.t",
+   "via": [
+    [
+     "615",
+     "318"
+    ],
+    [
+     "610",
+     "318"
+    ]
+   ]
+  },
+  {
+   "from": "dino.b",
+   "to": "cache.t-247"
+  },
+  {
+   "from": "depth.b",
+   "to": "cache.t-82"
+  },
+  {
+   "from": "tap.b",
+   "to": "cache.t+82"
+  },
+  {
+   "from": "events.b",
+   "to": "cache.t+247"
+  },
+  {
+   "from": "cache.r",
+   "to": "policy.l",
+   "via": [
+    [
+     "712",
+     "cache.cy"
+    ],
+    [
+     "712",
+     "policy.cy"
+    ]
+   ],
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "policy.b-301",
+   "to": "l_fm.t",
+   "label": "v_{θ}",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "policy.b-185",
+   "to": "h_aux.t",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "h_aux.b",
+   "to": "l_aux.t",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "policy.b-69",
+   "to": "h_cot.t",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "h_cot.b",
+   "to": "l_cot.t",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "policy.b+47",
+   "to": "h_ph.t",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "h_ph.b",
+   "to": "l_ph.t",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "policy.b+163",
+   "to": "h_lat.t",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "h_lat.b",
+   "to": "l_lat.t",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "policy.b+279",
+   "to": "l_bal.t",
+   "label": "router stats",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "t_fm.t",
+   "to": "l_fm.b",
+   "style": "dashed"
+  },
+  {
+   "from": "t_aux.t",
+   "to": "l_aux.b",
+   "style": "dashed"
+  },
+  {
+   "from": "t_cot.t",
+   "to": "l_cot.b",
+   "style": "dashed"
+  },
+  {
+   "from": "t_ph.t",
+   "to": "l_ph.b",
+   "style": "dashed"
+  },
+  {
+   "from": "t_lat.t",
+   "to": "l_lat.b",
+   "style": "dashed"
+  },
+  {
+   "from": "cache.r",
+   "to": "t_aux.b",
+   "via": [
+    [
+     "712",
+     "cache.cy"
+    ],
+    [
+     "712",
+     "450"
+    ],
+    [
+     "t_aux.cx",
+     "450"
+    ]
+   ],
+   "style": "dashed"
+  },
+  {
+   "from": "cache.r",
+   "to": "t_cot.b",
+   "via": [
+    [
+     "712",
+     "cache.cy"
+    ],
+    [
+     "712",
+     "450"
+    ],
+    [
+     "t_cot.cx",
+     "450"
+    ]
+   ],
+   "style": "dashed"
+  },
+  {
+   "from": "cache.r",
+   "to": "t_ph.b",
+   "via": [
+    [
+     "712",
+     "cache.cy"
+    ],
+    [
+     "712",
+     "450"
+    ],
+    [
+     "t_ph.cx",
+     "450"
+    ]
+   ],
+   "style": "dashed"
+  },
+  {
+   "from": "enc.t",
+   "to": "t_lat.b",
+   "style": "dashed"
+  },
+  {
+   "from": "img_future.t",
+   "to": "enc.b"
+  },
+  {
+   "from": "pi.b",
+   "to": "sim.t",
+   "label": "act",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "sim.r",
+   "to": "roll.l",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "roll.b",
+   "to": "rew.t",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "rew.b",
+   "to": "adv.t",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "adv.l",
+   "to": "lrl.r+40",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "ref.l",
+   "to": "lrl.r+58",
+   "via": [
+    [
+     "1700",
+     "ref.cy"
+    ],
+    [
+     "1700",
+     "lrl.cy+58"
+    ]
+   ],
+   "style": "dashed"
+  },
+  {
+   "from": "lrl.l",
+   "to": "pi.l",
+   "via": [
+    [
+     "1488",
+     "lrl.cy"
+    ],
+    [
+     "1488",
+     "pi.cy"
+    ]
+   ],
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "policy.r",
+   "to": "pi.l",
+   "via": [
+    [
+     "1462",
+     "policy.cy"
+    ],
+    [
+     "1462",
+     "pi.cy-14"
+    ],
+    [
+     "1500",
+     "pi.cy-14"
+    ]
+   ],
+   "tags": [
+    "main"
+   ]
+  }
+ ],
+ "title": "Fig. 3. Training: label-free pseudo-labels from frozen foundation models, multi-objective SFT with an explicit-to-latent reasoning curriculum, then ReinFlow-GRPO",
+ "legend": [
+  "frozen",
+  "train",
+  [
+   "target",
+   "pseudo-label / target"
+  ],
+  "loss",
+  "tensor"
+ ],
+ "caption": "Inputs to the policy are past-only; targets may use the whole episode and enter only the losses. Thick arrows: the main path; dashed: targets."
+}

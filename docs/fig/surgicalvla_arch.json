@@ -1,62 +1,14 @@
 {
  "name": "surgicalvla_arch",
- "title": "Fig. 1. SurgicalVLA: SmolVLA with past-only object tokens, explicit-to-latent reasoning and a phase- and object-conditioned MoE action expert",
- "width": 1840,
- "height": 1300,
- "legend": [
-  "frozen",
-  "train",
-  "tensor",
-  [
-   "side",
-   "conditioning / optional text"
-  ],
-  [
-   "target",
-   "offline pseudo-labels"
-  ],
-  "loss",
-  [
-   "mask",
-   "expert not selected"
-  ]
- ],
- "caption": "Example: LIBERO-Spatial episode 1261, frame t = 36, target phrase “black bowl”. 792 M parameters, 442 M trained (upcycled MoE); the VLM and all perception models stay frozen.",
+ "width": 1940,
+ "height": 900,
  "nodes": [
-  {
-   "id": "g1",
-   "type": "group",
-   "x": 20,
-   "y": 48,
-   "w": 930,
-   "h": 818,
-   "label": "① Vision–language prefix · SmolVLM2-500M (frozen)"
-  },
-  {
-   "id": "instr",
-   "type": "block",
-   "kind": "plain",
-   "x": 40,
-   "y": 86,
-   "w": 262,
-   "h": 64,
-   "size": 12,
-   "label": [
-    "instruction  ℓ",
-    "“pick up the black bowl next to the",
-    "cookie box and place it on the plate”"
-   ],
-   "info": "LIBERO-Spatial episode 1261. The target phrase “black bowl” is read from the instruction by a rule, with a grounded SmolVLM2 answer as fallback; it prompts SAM 3.",
-   "tags": [
-    "input"
-   ]
-  },
   {
    "id": "img_third",
    "type": "block",
    "kind": "plain",
    "x": 40,
-   "y": 176,
+   "y": 84,
    "w": 120,
    "h": 120,
    "label": [],
@@ -65,10 +17,10 @@
    "info": ""
   },
   {
-   "id": "cap_third",
+   "id": "cap_img_third",
    "type": "text",
    "x": 100.0,
-   "y": 310,
+   "y": 218,
    "label": [
     "o_t  third-person"
    ],
@@ -82,8 +34,8 @@
    "id": "img_wrist",
    "type": "block",
    "kind": "plain",
-   "x": 182,
-   "y": 176,
+   "x": 190,
+   "y": 84,
    "w": 120,
    "h": 120,
    "label": [],
@@ -92,12 +44,56 @@
    "info": ""
   },
   {
-   "id": "cap_wrist",
+   "id": "cap_img_wrist",
    "type": "text",
-   "x": 242.0,
-   "y": 310,
+   "x": 250.0,
+   "y": 218,
    "label": [
     "o_t  wrist"
+   ],
+   "size": 11,
+   "anchor": "middle",
+   "muted": true,
+   "mono": false,
+   "bold": false
+  },
+  {
+   "id": "instr",
+   "type": "block",
+   "kind": "plain",
+   "x": 360,
+   "y": 92,
+   "w": 200,
+   "h": 100,
+   "size": 12,
+   "label": [
+    "instruction  ℓ",
+    "“pick up the black bowl",
+    "next to the cookie box",
+    "and place it on the plate”"
+   ],
+   "info": "LIBERO-Spatial episode 1261. The target phrase “black bowl” is read from it and prompts SAM 3."
+  },
+  {
+   "id": "img_third_p",
+   "type": "block",
+   "kind": "plain",
+   "x": 640,
+   "y": 84,
+   "w": 120,
+   "h": 120,
+   "label": [],
+   "rx": 2,
+   "title": "o_t  (same frame)",
+   "info": ""
+  },
+  {
+   "id": "cap_img_third_p",
+   "type": "text",
+   "x": 700.0,
+   "y": 218,
+   "label": [
+    "o_t  (same frame)"
    ],
    "size": 11,
    "anchor": "middle",
@@ -109,85 +105,24 @@
    "id": "state",
    "type": "block",
    "kind": "tensor",
-   "x": 40,
-   "y": 327,
-   "w": 262,
-   "h": 30,
-   "size": 12,
+   "x": 880,
+   "y": 112,
+   "w": 110,
+   "h": 60,
    "label": [
-    "proprio  s_t ∈ ℝ^{8}  (padded to 32)"
+    "proprio  s_t",
+    "ℝ^{8} → pad 32"
    ],
-   "shape": "[8] → [32]",
-   "tags": [
-    "input"
-   ]
+   "size": 12
   },
   {
-   "id": "tok",
-   "type": "block",
-   "kind": "frozen",
-   "x": 350,
-   "y": 90,
-   "w": 220,
-   "h": 56,
-   "label": [
-    "tokenizer + embedding",
-    "SmolVLM2 vocab 49 280 · ≤ 48 tok"
-   ],
-   "shape": "[≤ 48] → [≤ 48, 960]",
-   "info": "The instruction's token embeddings, frozen."
-  },
-  {
-   "id": "siglip",
-   "type": "block",
-   "kind": "frozen",
-   "x": 350,
-   "y": 186,
-   "w": 220,
-   "h": 96,
-   "label": [
-    "SigLIP vision encoder",
-    "+ pixel-shuffle connector",
-    "512×512 (resize + pad) → 64 tok",
-    "86.4 M + 11.8 M"
-   ],
-   "shape": "[2, 3, 512, 512] → [128, 960]",
-   "params": "98.2 M, frozen",
-   "info": "SmolVLM2's vision tower; 32×32 patches pooled 4× by pixel shuffle to 64 tokens per camera."
-  },
-  {
-   "id": "sproj",
-   "type": "block",
-   "kind": "train",
-   "x": 350,
-   "y": 322,
-   "w": 220,
-   "h": 40,
-   "label": [
-    "state projection",
-    "32 → 960"
-   ],
-   "shape": "[32] → [1, 960]",
-   "tags": [
-    "trainable"
-   ]
-  },
-  {
-   "id": "g1b",
-   "type": "group",
-   "x": 34,
-   "y": 394,
-   "w": 902,
-   "h": 196,
-   "label": "past-only object tokens"
-  },
-  {
-   "id": "g1b_n",
+   "id": "in_note",
    "type": "text",
-   "x": 230,
-   "y": 414,
+   "x": 1030,
+   "y": 128,
    "label": [
-    "frame t only · cached for training, computed live at inference (236 ms / chunk)"
+    "n_obs_steps = 1: no frame history;",
+    "the policy is re-run every 50 steps"
    ],
    "size": 11,
    "anchor": "start",
@@ -196,25 +131,75 @@
    "bold": false
   },
   {
+   "id": "siglip",
+   "type": "block",
+   "kind": "frozen",
+   "x": 60,
+   "y": 300,
+   "w": 260,
+   "h": 100,
+   "label": [
+    "SigLIP + pixel-shuffle connector",
+    "512² (resize + pad) → 64 tok / camera",
+    "98.2 M · frozen"
+   ],
+   "shape": "[2, 3, 512, 512] → [128, 960]",
+   "info": "SmolVLM2's vision tower; 32×32 patches pooled 4× by pixel shuffle."
+  },
+  {
+   "id": "tok",
+   "type": "block",
+   "kind": "frozen",
+   "x": 370,
+   "y": 310,
+   "w": 180,
+   "h": 70,
+   "label": [
+    "tokenizer + embedding",
+    "≤ 48 tokens · frozen"
+   ],
+   "shape": "[≤ 48] → [≤ 48, 960]"
+  },
+  {
+   "id": "percep",
+   "type": "block",
+   "kind": "frozen",
+   "x": 590,
+   "y": 298,
+   "w": 172,
+   "h": 114,
+   "label": [
+    "SAM 3 → instance masks",
+    "top-3 “black bowl” + EE",
+    "DINOv2-S pooled in mask",
+    "Depth Anything V2-S"
+   ],
+   "params": "SAM 3 848 M · DINOv2-S 22 M · DA-V2-S 25 M (outside the policy)",
+   "info": "Per frame and without memory, so object inputs never see the future. Cached for training; 236 ms per chunk live.",
+   "tags": [
+    "objects"
+   ]
+  },
+  {
    "id": "img_objects",
    "type": "block",
    "kind": "plain",
-   "x": 48,
-   "y": 428,
-   "w": 124,
-   "h": 124,
+   "x": 772,
+   "y": 298,
+   "w": 96,
+   "h": 96,
    "label": [],
    "rx": 2,
-   "title": "3 × “black bowl” + end effector",
+   "title": "K = 4 objects",
    "info": ""
   },
   {
-   "id": "cap_objects",
+   "id": "cap_img_objects",
    "type": "text",
-   "x": 110.0,
-   "y": 566,
+   "x": 820.0,
+   "y": 408,
    "label": [
-    "3 × “black bowl” + end effector"
+    "K = 4 objects"
    ],
    "size": 11,
    "anchor": "middle",
@@ -223,160 +208,101 @@
    "bold": false
   },
   {
-   "id": "percep",
-   "type": "block",
-   "kind": "frozen",
-   "x": 196,
-   "y": 428,
-   "w": 246,
-   "h": 124,
-   "label": [
-    "frozen perception (outside the policy)",
-    "SAM 3: masks for the target phrase",
-    "  → top-3 instances + end effector",
-    "DINOv2-S: feature pooled in mask",
-    "Depth Anything V2-S: relative depth"
-   ],
-   "params": "SAM 3 848 M · DINOv2-S 22 M · DA-V2-S 25 M (frozen)",
-   "info": "Without memory: frame t only, so inputs never see the future.",
-   "tags": [
-    "objects"
-   ]
-  },
-  {
-   "id": "desc",
-   "type": "tensor",
-   "x": 478,
-   "y": 440,
-   "w": 26,
-   "h": 110,
-   "label": "K = 4",
-   "segments": [
-    [
-     0.8,
-     "frozen",
-     "feat 384"
-    ],
-    [
-     0.2,
-     "tensor",
-     "pose 8"
-    ]
-   ],
-   "seg_labels": "right",
-   "shape": "[4, 384 + 8]: pose = box(4), centroid(2), depth, score",
-   "info": "One descriptor per object; RoboTwin adds a second end effector (K = 5).",
-   "tags": [
-    "objects"
-   ]
-  },
-  {
    "id": "objproj",
    "type": "block",
    "kind": "train",
-   "x": 600,
-   "y": 440,
-   "w": 200,
-   "h": 58,
+   "x": 590,
+   "y": 438,
+   "w": 210,
+   "h": 54,
    "label": [
-    "object projector",
-    "3.2 M · 1 token / object"
+    "object projector · 3.2 M",
+    "[feat 384 ; pose 8] → 1 tok / obj"
    ],
-   "shape": "[4, 392] → [4, 960] (+ context c_obj ∈ ℝ^{720})",
-   "params": "3.24 M",
+   "shape": "[4, 392] → [4, 960]; context c_obj ∈ ℝ^{720}",
    "tags": [
-    "objects",
-    "trainable"
+    "objects"
    ],
-   "info": "Fuses feature and pose into one prefix token per object, and a pooled object context c_obj for the MoE router."
+   "info": "pose = box (4), mask centroid (2), median relative depth, SAM 3 score. Also emits the object context c_obj for the MoE router."
   },
   {
    "id": "cobj",
    "type": "tensor",
-   "x": 830,
-   "y": 446,
-   "w": 78,
-   "h": 24,
+   "x": 812,
+   "y": 454,
+   "w": 52,
+   "h": 20,
    "kind": "side",
    "label": "",
-   "dim": "c_obj ∈ ℝ^{720}",
-   "info": "Object context, given to every MoE router.",
+   "dim": "c_obj → ④",
    "tags": [
-    "objects",
-    "moe"
+    "objects"
+   ]
+  },
+  {
+   "id": "sproj",
+   "type": "block",
+   "kind": "train",
+   "x": 880,
+   "y": 310,
+   "w": 110,
+   "h": 70,
+   "label": [
+    "state proj",
+    "32 → 960"
    ]
   },
   {
    "id": "cotx",
    "type": "block",
    "kind": "side",
-   "x": 560,
-   "y": 606,
+   "x": 1010,
+   "y": 318,
    "w": 130,
-   "h": 42,
+   "h": 70,
    "dashed": true,
    "label": [
     "explicit CoT text",
-    "≤ 48 tok · fades out"
+    "training only",
+    "(Fig. 3)"
    ],
-   "info": "Teacher-forced; the probability of feeding it decays 1 → 0 over the first 25 k steps, so inference is latent-only.",
-   "tags": [
-    "cot"
-   ]
+   "info": "Teacher-forced during training and faded out by the curriculum; never decoded at inference."
   },
   {
    "id": "lq",
    "type": "block",
    "kind": "train",
-   "x": 705,
-   "y": 606,
+   "x": 1160,
+   "y": 318,
    "w": 130,
-   "h": 42,
+   "h": 70,
    "label": [
     "latent queries",
-    "4 × 960, learned"
+    "4 × 960 · learned"
    ],
-   "shape": "[4, 960]",
-   "tags": [
-    "cot",
-    "trainable"
-   ]
+   "info": "Latent reasoning tokens; trained to predict the embedding of the frame 1 s ahead (Fig. 3)."
   },
   {
    "id": "strip",
    "type": "block",
    "kind": "plain",
    "x": 40,
-   "y": 678,
-   "w": 880,
-   "h": 66,
+   "y": 574,
+   "w": 1250,
+   "h": 64,
    "label": [],
    "dashed": true,
    "title": "prefix tokens",
    "shape": "≈ 233 × 960",
-   "info": "images | text | objects | state attend bidirectionally; CoT and latent queries are causal (they see everything before them)."
-  },
-  {
-   "id": "strip_t",
-   "type": "text",
-   "x": 48,
-   "y": 670,
-   "label": [
-    "prefix  (≈ 233 tokens × 960)"
-   ],
-   "size": 12,
-   "anchor": "start",
-   "muted": false,
-   "mono": false,
-   "bold": true
+   "info": "images | text | objects | state attend bidirectionally; CoT text and latent queries are causal."
   },
   {
    "id": "vlm",
    "type": "block",
    "kind": "frozen",
    "x": 40,
-   "y": 770,
-   "w": 760,
+   "y": 680,
+   "w": 1170,
    "h": 62,
    "stack": true,
    "badge": "× 16",
@@ -385,73 +311,62 @@
     "self-attention + SwiGLU · 204.6 M · frozen · run once per action chunk"
    ],
    "shape": "[≈ 233, 960] → K, V per layer",
-   "params": "204.6 M (frozen)",
-   "info": "Its keys and values are cached for all 10 denoising steps."
+   "info": "Its keys and values are cached and reused by all 10 denoising steps."
   },
   {
    "id": "kv",
    "type": "tensor",
-   "x": 838,
-   "y": 766,
+   "x": 1236,
+   "y": 676,
    "w": 30,
    "h": 70,
    "kind": "frozen",
    "label": "K, V",
-   "dim": "× 16 layers",
+   "dim": "× 16",
    "shape": "16 × [≈ 233, 320]"
-  },
-  {
-   "id": "g2",
-   "type": "group",
-   "x": 966,
-   "y": 48,
-   "w": 854,
-   "h": 818,
-   "label": "② Flow-matching action expert (trained) · phase- and object-conditioned MoE"
   },
   {
    "id": "noisy",
    "type": "tensor",
-   "x": 990,
-   "y": 704,
+   "x": 1430,
+   "y": 716,
    "w": 150,
-   "h": 26,
+   "h": 24,
    "label": "",
-   "dim": "x_τ = τ ε + (1 − τ) a,  τ ~ Beta(1.5, 1)",
-   "shape": "[50, 32] + τ",
-   "info": "Noisy action chunk at flow time τ."
+   "dim": "x_τ ∈ ℝ^{50×32},  τ",
+   "shape": "noise at flow time τ"
   },
   {
    "id": "ain",
    "type": "block",
    "kind": "train",
-   "x": 990,
-   "y": 628,
+   "x": 1430,
+   "y": 640,
    "w": 150,
-   "h": 40,
+   "h": 44,
    "label": [
     "action + time MLP",
     "→ 50 × 720"
-   ],
-   "tags": [
-    "trainable"
    ]
   },
   {
    "id": "expert",
    "type": "block",
    "kind": "train",
-   "x": 990,
-   "y": 300,
-   "w": 150,
-   "h": 290,
+   "x": 1418,
+   "y": 262,
+   "w": 178,
+   "h": 340,
    "stack": true,
    "badge": "× 16",
    "label": [
     "action expert",
     "16 layers",
     "d = 720",
+    "attends to",
+    "prefix K, V",
     "MoE FFN",
+    "(Fig. 2)",
     "381.6 M"
    ],
    "strip": {
@@ -462,293 +377,102 @@
    },
    "shape": "[50, 720] → [50, 720]",
    "params": "381.6 M (trainable)",
-   "tags": [
-    "trainable",
-    "moe"
-   ],
-   "info": "SmolVLA's expert with every FFN up-cycled to a mixture of experts."
+   "info": "SmolVLA's action expert with every FFN up-cycled to a mixture of experts."
   },
   {
    "id": "aout",
    "type": "block",
    "kind": "train",
-   "x": 990,
-   "y": 214,
+   "x": 1430,
+   "y": 184,
    "w": 150,
-   "h": 40,
+   "h": 44,
    "label": [
     "action out",
     "720 → 32"
-   ],
-   "tags": [
-    "trainable"
    ]
   },
   {
    "id": "v",
    "type": "tensor",
-   "x": 1040,
-   "y": 128,
+   "x": 1480,
+   "y": 106,
    "w": 50,
    "h": 40,
    "label": "v_θ",
    "dim": "",
-   "shape": "[50, 32] (7 used on LIBERO)"
+   "shape": "[50, 32]: velocity field"
+  },
+  {
+   "id": "cobj2",
+   "type": "tensor",
+   "x": 1340,
+   "y": 300,
+   "w": 60,
+   "h": 20,
+   "kind": "side",
+   "label": "c_obj",
+   "dim": "from ②"
+  },
+  {
+   "id": "ephase",
+   "type": "tensor",
+   "x": 1340,
+   "y": 384,
+   "w": 60,
+   "h": 20,
+   "kind": "side",
+   "label": "e_phase",
+   "dim": "learned null",
+   "info": "At inference no CoT text is fed, so the router's phase input is a learned constant (modeling_smolvla_moe._phase_from_hidden)."
   },
   {
    "id": "euler",
    "type": "block",
    "kind": "plain",
-   "x": 1200,
-   "y": 128,
-   "w": 124,
-   "h": 40,
-   "dashed": true,
+   "x": 1724,
+   "y": 100,
+   "w": 184,
+   "h": 50,
    "label": [
     "10 Euler steps",
-    "inference"
-   ],
-   "info": "Integrates noise → a_{t:t+50}; RL rollouts use the SDE with the ReinFlow noise head (2.1 M)."
+    "noise → action chunk"
+   ]
   },
   {
    "id": "act",
+   "type": "tensor",
+   "x": 1766,
+   "y": 196,
+   "w": 100,
+   "h": 40,
+   "label": "a_{t:t+50}",
+   "dim": "50 × 7 (LIBERO)"
+  },
+  {
+   "id": "out_n1",
    "type": "text",
-   "x": 1262,
-   "y": 192,
+   "x": 1724,
+   "y": 290,
    "label": [
-    "a_{t:t+50} ∈ ℝ^{50×7}"
+    "execute all 50 actions,",
+    "then re-plan from o_{t+50}"
    ],
-   "size": 11,
-   "anchor": "middle",
+   "size": 12,
+   "anchor": "start",
    "muted": false,
-   "mono": true,
+   "mono": false,
    "bold": false
   },
   {
-   "id": "g2b",
-   "type": "group",
-   "x": 1190,
-   "y": 232,
-   "w": 616,
-   "h": 556,
-   "label": "one expert layer ℓ"
-  },
-  {
-   "id": "zin",
-   "type": "tensor",
-   "x": 1206,
-   "y": 700,
-   "w": 90,
-   "h": 22,
-   "label": "",
-   "dim": "h ∈ ℝ^{50×720}"
-  },
-  {
-   "id": "attn",
-   "type": "block",
-   "kind": "train",
-   "x": 1206,
-   "y": 560,
-   "w": 210,
-   "h": 86,
-   "label": [
-    "attention · 1.84 M",
-    "ℓ even: self-attn over [prefix ; chunk]",
-    "ℓ odd: cross-attn to prefix K, V",
-    "(SmolVLA interleaving)"
-   ],
-   "tags": [
-    "trainable"
-   ]
-  },
-  {
-   "id": "add1",
-   "type": "op",
-   "x": 1298,
-   "y": 516,
-   "w": 24,
-   "label": [
-    "+"
-   ]
-  },
-  {
-   "id": "router",
-   "type": "block",
-   "kind": "train",
-   "x": 1206,
-   "y": 400,
-   "w": 210,
-   "h": 70,
-   "label": [
-    "router (fp32)",
-    "[h ; e_phase ; c_obj] ∈ ℝ^{2160}",
-    "→ 4 logits, top-2"
-   ],
-   "tags": [
-    "moe",
-    "trainable"
-   ],
-   "info": "Routes each action token by its content, the predicted manipulation phase and the object context. Switch load-balancing loss keeps experts in use."
-  },
-  {
-   "id": "ephase",
-   "type": "tensor",
-   "x": 1222,
-   "y": 300,
-   "w": 78,
-   "h": 22,
-   "kind": "side",
-   "label": "e_phase",
-   "dim": "from ③ phase head",
-   "tags": [
-    "moe",
-    "cot"
-   ],
-   "info": "Phase embedding ∈ ℝ^720: from the CoT phase token when the trace is fed, else projected from the pooled prefix."
-  },
-  {
-   "id": "cobj2",
-   "type": "tensor",
-   "x": 1322,
-   "y": 300,
-   "w": 78,
-   "h": 22,
-   "kind": "side",
-   "label": "c_obj",
-   "dim": "from ① projector",
-   "tags": [
-    "moe",
-    "objects"
-   ]
-  },
-  {
-   "id": "e1",
-   "type": "block",
-   "kind": "train",
-   "x": 1470,
-   "y": 300,
-   "w": 150,
-   "h": 38,
-   "label": [
-    "expert 1  ✓",
-    "SwiGLU 960 → 2048"
-   ],
-   "size": 12,
-   "tags": [
-    "moe"
-   ],
-   "info": "Routed expert, initialised from SmolVLA's FFN (up-cycling). Selected for this token (top-2)."
-  },
-  {
-   "id": "e2",
-   "type": "block",
-   "kind": "mask",
-   "x": 1470,
+   "id": "out_n2",
+   "type": "text",
+   "x": 1724,
    "y": 350,
-   "w": 150,
-   "h": 38,
    "label": [
-    "expert 2",
-    "SwiGLU 960 → 2048"
-   ],
-   "size": 12,
-   "tags": [
-    "moe"
-   ],
-   "info": "Routed expert, initialised from SmolVLA's FFN (up-cycling)."
-  },
-  {
-   "id": "e3",
-   "type": "block",
-   "kind": "train",
-   "x": 1470,
-   "y": 400,
-   "w": 150,
-   "h": 38,
-   "label": [
-    "expert 3  ✓",
-    "SwiGLU 960 → 2048"
-   ],
-   "size": 12,
-   "tags": [
-    "moe"
-   ],
-   "info": "Routed expert, initialised from SmolVLA's FFN (up-cycling). Selected for this token (top-2)."
-  },
-  {
-   "id": "e4",
-   "type": "block",
-   "kind": "mask",
-   "x": 1470,
-   "y": 450,
-   "w": 150,
-   "h": 38,
-   "label": [
-    "expert 4",
-    "SwiGLU 960 → 2048"
-   ],
-   "size": 12,
-   "tags": [
-    "moe"
-   ],
-   "info": "Routed expert, initialised from SmolVLA's FFN (up-cycling)."
-  },
-  {
-   "id": "shared",
-   "type": "block",
-   "kind": "train",
-   "x": 1470,
-   "y": 512,
-   "w": 150,
-   "h": 38,
-   "label": [
-    "shared expert",
-    "always on"
-   ],
-   "size": 12,
-   "tags": [
-    "moe"
-   ]
-  },
-  {
-   "id": "mix",
-   "type": "op",
-   "x": 1662,
-   "y": 420,
-   "w": 28,
-   "label": [
-    "Σ"
-   ],
-   "info": "Shared output + gate-weighted sum of the 2 selected experts."
-  },
-  {
-   "id": "add2",
-   "type": "op",
-   "x": 1730,
-   "y": 421,
-   "w": 26,
-   "label": [
-    "+"
-   ]
-  },
-  {
-   "id": "zout",
-   "type": "tensor",
-   "x": 1700,
-   "y": 300,
-   "w": 86,
-   "h": 22,
-   "label": "",
-   "dim": "h′ → layer ℓ+1"
-  },
-  {
-   "id": "ffn_note",
-   "type": "text",
-   "x": 1470,
-   "y": 604,
-   "label": [
-    "FFN per layer: 22.1 M (4 routed + 1 shared);",
-    "active: shared + 2 of 4 = 3× SmolVLA FFN compute"
+    "per chunk (RTX A4500):",
+    "policy 242 ms",
+    "perception 236 ms"
    ],
    "size": 11,
    "anchor": "start",
@@ -757,334 +481,15 @@
    "bold": false
   },
   {
-   "id": "g3",
-   "type": "group",
-   "x": 20,
-   "y": 884,
-   "w": 1800,
-   "h": 346,
-   "label": "③ Training only · label-free targets"
-  },
-  {
-   "id": "aux",
-   "type": "block",
-   "kind": "train",
-   "x": 470,
-   "y": 922,
-   "w": 250,
-   "h": 58,
-   "label": [
-    "aux vision heads · 0.83 M",
-    "in: mean action-expert output",
-    "feat 384 · motion 2 · track 2 · rel 3"
-   ],
-   "shape": "[720] → MLP 512 → heads",
-   "tags": [
-    "aux",
-    "trainable"
-   ],
-   "info": "Reads the action expert, so the targets shape features the policy acts on while the VLM stays frozen."
-  },
-  {
-   "id": "cot",
-   "type": "block",
-   "kind": "train",
-   "x": 470,
-   "y": 996,
-   "w": 250,
-   "h": 50,
-   "label": [
-    "CoT LM head · 47.3 M",
-    "in: CoT-token outputs"
-   ],
-   "shape": "[960] → 49 280",
-   "tags": [
-    "cot",
-    "trainable"
-   ]
-  },
-  {
-   "id": "phase",
-   "type": "block",
-   "kind": "train",
-   "x": 470,
-   "y": 1062,
-   "w": 250,
-   "h": 50,
-   "label": [
-    "phase head · 720 → 4 (→ e_phase)",
-    "approach · grasp · transport · release"
-   ],
-   "tags": [
-    "cot",
-    "trainable",
-    "moe"
-   ],
-   "info": "Input: the CoT phase token's output when the trace is fed, else the projected pooled prefix."
-  },
-  {
-   "id": "lat",
-   "type": "block",
-   "kind": "train",
-   "x": 470,
-   "y": 1128,
-   "w": 250,
-   "h": 50,
-   "label": [
-    "latent predictor · 1.85 M",
-    "in: mean of the 4 latent-query outputs"
-   ],
-   "shape": "[4, 960] → [960]",
-   "tags": [
-    "cot",
-    "trainable"
-   ]
-  },
-  {
-   "id": "l_bal",
-   "type": "block",
-   "kind": "loss",
-   "x": 1190,
-   "y": 922,
-   "w": 180,
-   "h": 36,
-   "label": [
-    "ℒ_{balance}  · 0.01  (router stats)"
-   ],
-   "tags": [
-    "loss",
-    "moe"
-   ]
-  },
-  {
-   "id": "l_fm",
-   "type": "block",
-   "kind": "loss",
-   "x": 1190,
-   "y": 966,
-   "w": 180,
-   "h": 36,
-   "label": [
-    "ℒ_{FM} = ‖v_{θ} − (ε − a)‖²  · 1"
-   ],
-   "tags": [
-    "loss"
-   ]
-  },
-  {
-   "id": "l_aux",
-   "type": "block",
-   "kind": "loss",
-   "x": 1190,
-   "y": 1010,
-   "w": 180,
-   "h": 36,
-   "label": [
-    "ℒ_{aux}  · 0.1 / 0.1 / 0.1 / 0.02"
-   ],
-   "tags": [
-    "loss",
-    "aux"
-   ],
-   "info": "Confidence-weighted regression to the cached targets."
-  },
-  {
-   "id": "l_cot",
-   "type": "block",
-   "kind": "loss",
-   "x": 1190,
-   "y": 1054,
-   "w": 180,
-   "h": 36,
-   "label": [
-    "ℒ_{CoT}  · 0.1  (cross-entropy)"
-   ],
-   "tags": [
-    "loss",
-    "cot"
-   ]
-  },
-  {
-   "id": "l_ph",
-   "type": "block",
-   "kind": "loss",
-   "x": 1190,
-   "y": 1098,
-   "w": 180,
-   "h": 36,
-   "label": [
-    "ℒ_{phase}  · 0.1"
-   ],
-   "tags": [
-    "loss",
-    "cot"
-   ]
-  },
-  {
-   "id": "l_lat",
-   "type": "block",
-   "kind": "loss",
-   "x": 1190,
-   "y": 1142,
-   "w": 180,
-   "h": 36,
-   "label": [
-    "ℒ_{latent} = 1 − cos(·, sg[·])  · 0.1"
-   ],
-   "tags": [
-    "loss",
-    "cot"
-   ]
-  },
-  {
-   "id": "img_targets",
-   "type": "block",
-   "kind": "plain",
-   "x": 1690,
-   "y": 922,
-   "w": 112,
-   "h": 112,
-   "label": [],
-   "rx": 2,
-   "title": "mask · tracks · gripper",
-   "info": ""
-  },
-  {
-   "id": "cap_targets",
+   "id": "out_n3",
    "type": "text",
-   "x": 1746.0,
-   "y": 1048,
+   "x": 1724,
+   "y": 430,
    "label": [
-    "mask · tracks · gripper"
-   ],
-   "size": 11,
-   "anchor": "middle",
-   "muted": true,
-   "mono": false,
-   "bold": false
-  },
-  {
-   "id": "cache",
-   "type": "block",
-   "kind": "target",
-   "x": 1440,
-   "y": 922,
-   "w": 226,
-   "h": 112,
-   "label": [
-    "feature cache (offline)",
-    "SAM 3 video masks of the target",
-    "TAPNext++ point tracks · DINOv2-S",
-    "phases from gripper events",
-    "CoT traces written from the labels"
-   ],
-   "shape": "keyed by (episode, frame); targets every 4th frame",
-   "tags": [
-    "aux",
-    "cot"
-   ],
-   "info": "Targets may use the whole episode; they only enter losses. Never simulator ground truth, which is kept for validation."
-  },
-  {
-   "id": "trace",
-   "type": "text",
-   "x": 1440,
-   "y": 1064,
-   "label": [
-    "trace at t = 36, written from the pseudo-labels:",
-    "<cot> phase: approach | object: black bowl | motion: down </cot>"
-   ],
-   "size": 11,
-   "anchor": "start",
-   "muted": true,
-   "mono": false,
-   "bold": false
-  },
-  {
-   "id": "ema",
-   "type": "block",
-   "kind": "frozen",
-   "x": 1440,
-   "y": 1132,
-   "w": 226,
-   "h": 50,
-   "label": [
-    "target encoder (stop-gradient)",
-    "the frozen SigLIP + connector"
-   ],
-   "shape": "o_{t+10}, all cameras → mean token [960]",
-   "tags": [
-    "cot"
-   ],
-   "info": "Target: the mean image-token embedding of the frame 10 steps (1 s at 10 fps) ahead. With the vision encoder frozen this is the encoder itself; an EMA copy (decay 0.99) is kept only when the vision encoder trains."
-  },
-  {
-   "id": "img_future",
-   "type": "block",
-   "kind": "plain",
-   "x": 1690,
-   "y": 1112,
-   "w": 90,
-   "h": 90,
-   "label": [],
-   "rx": 2,
-   "title": "o_{t+10}",
-   "info": ""
-  },
-  {
-   "id": "cap_future",
-   "type": "text",
-   "x": 1790,
-   "y": 1160,
-   "label": [
-    "o_{t+10}"
-   ],
-   "size": 11,
-   "anchor": "start",
-   "muted": true,
-   "mono": false,
-   "bold": false
-  },
-  {
-   "id": "total",
-   "type": "text",
-   "x": 40,
-   "y": 940,
-   "label": [
-    "ℒ = ℒ_{FM} + Σ_{k} w_{k} ℒ_{aux,k} + 0.1 ℒ_{latent}",
-    "      + 0.1 ℒ_{CoT} + 0.1 ℒ_{phase} + 0.01 ℒ_{balance}"
-   ],
-   "size": 13,
-   "anchor": "start",
-   "muted": false,
-   "mono": false,
-   "bold": false
-  },
-  {
-   "id": "total_n",
-   "type": "text",
-   "x": 40,
-   "y": 1000,
-   "label": [
-    "Only ℒ_{FM} reaches the action output directly;",
-    "the auxiliary losses train the action expert,",
-    "the object projector and the latent queries."
-   ],
-   "size": 11,
-   "anchor": "start",
-   "muted": true,
-   "mono": false,
-   "bold": false
-  },
-  {
-   "id": "infer_n",
-   "type": "text",
-   "x": 40,
-   "y": 1070,
-   "label": [
-    "At inference: object tokens + latent queries only;",
-    "no text decoding, no auxiliary heads.",
-    "Cost per chunk: 242 ms policy + 236 ms perception."
+    "at inference:",
+    "latent queries only,",
+    "no text decoding,",
+    "no auxiliary heads"
    ],
    "size": 11,
    "anchor": "start",
@@ -1095,589 +500,217 @@
  ],
  "edges": [
   {
-   "from": "instr.r",
-   "to": "tok.l"
-  },
-  {
-   "from": "img_third.r",
-   "to": "siglip.l",
-   "via": [
-    [
-     "330",
-     "img_third.cy"
-    ],
-    [
-     "330",
-     "siglip.cy"
-    ]
+   "from": "img_third.b",
+   "to": "siglip.t-90",
+   "tags": [
+    "main"
    ]
   },
   {
-   "from": "img_wrist.r",
-   "to": "siglip.l"
+   "from": "img_wrist.b",
+   "to": "siglip.t+60",
+   "tags": [
+    "main"
+   ]
   },
   {
-   "from": "state.r",
-   "to": "sproj.l"
+   "from": "instr.b",
+   "to": "tok.t",
+   "tags": [
+    "main"
+   ]
   },
   {
-   "from": "img_objects.r",
-   "to": "percep.l"
+   "from": "img_third_p.b",
+   "to": "percep.t+24"
   },
   {
-   "from": "percep.r",
-   "to": "desc.l"
-  },
-  {
-   "from": "desc.r",
-   "to": "objproj.l"
+   "from": "percep.b",
+   "to": "objproj.t-19"
   },
   {
    "from": "objproj.r",
-   "to": "cobj.l"
-  },
-  {
-   "from": "tok.r",
-   "to": "strip.r",
-   "via": [
-    [
-     "930",
-     "tok.cy"
-    ],
-    [
-     "930",
-     "strip.cy"
-    ]
-   ],
-   "tags": [
-    "input"
-   ]
-  },
-  {
-   "from": "siglip.r",
-   "to": "strip.r",
-   "via": [
-    [
-     "930",
-     "siglip.cy"
-    ],
-    [
-     "930",
-     "strip.cy"
-    ]
-   ],
-   "tags": [
-    "input"
-   ]
-  },
-  {
-   "from": "sproj.r",
-   "to": "strip.r",
-   "via": [
-    [
-     "930",
-     "sproj.cy"
-    ],
-    [
-     "930",
-     "strip.cy"
-    ]
-   ],
-   "tags": [
-    "input"
-   ]
-  },
-  {
-   "from": "objproj.t+80",
-   "to": "strip.r",
-   "via": [
-    [
-     "780",
-     "420"
-    ],
-    [
-     "930",
-     "420"
-    ],
-    [
-     "930",
-     "strip.cy"
-    ]
-   ],
-   "tags": [
-    "objects"
-   ]
-  },
-  {
-   "from": "cotx.b",
-   "to": "strip.t+145",
+   "to": "cobj.l",
    "style": "dashed"
   },
   {
-   "from": "lq.b-24",
-   "to": "strip.t+266"
+   "from": "state.b",
+   "to": "sproj.t"
   },
   {
-   "from": "strip.b",
-   "to": "vlm.t"
+   "from": "siglip.b",
+   "to": "strip.t-475",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "tok.b",
+   "to": "strip.t-205",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "objproj.b",
+   "to": "strip.t+30",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "sproj.b",
+   "to": "strip.t+270"
+  },
+  {
+   "from": "cotx.b",
+   "to": "strip.t+410",
+   "style": "dashed"
+  },
+  {
+   "from": "lq.b",
+   "to": "strip.t+560"
+  },
+  {
+   "from": "strip.b-40",
+   "to": "vlm.t",
+   "tags": [
+    "main"
+   ]
   },
   {
    "from": "vlm.r",
-   "to": "kv.l"
+   "to": "kv.l",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "kv.r",
+   "to": "expert.l+135",
+   "via": [
+    [
+     "1360",
+     "kv.cy"
+    ],
+    [
+     "1360",
+     "expert.cy+135"
+    ]
+   ],
+   "label": "prefix K, V",
+   "tags": [
+    "main"
+   ]
   },
   {
    "from": "noisy.t",
-   "to": "ain.b"
+   "to": "ain.b",
+   "tags": [
+    "main"
+   ]
   },
   {
    "from": "ain.t",
-   "to": "expert.b"
+   "to": "expert.b",
+   "tags": [
+    "main"
+   ]
   },
   {
    "from": "expert.t",
-   "to": "aout.b"
+   "to": "aout.b",
+   "tags": [
+    "main"
+   ]
   },
   {
    "from": "aout.t",
-   "to": "v.b"
+   "to": "v.b",
+   "tags": [
+    "main"
+   ]
+  },
+  {
+   "from": "cobj2.r",
+   "to": "expert.l-122",
+   "style": "dashed"
+  },
+  {
+   "from": "ephase.r",
+   "to": "expert.l-38",
+   "style": "dashed"
   },
   {
    "from": "v.r",
    "to": "euler.l",
-   "style": "dashed"
-  },
-  {
-   "from": "kv.r",
-   "to": "expert.l+90",
-   "via": [
-    [
-     "958",
-     "kv.cy"
-    ],
-    [
-     "958",
-     "expert.cy+90"
-    ]
-   ]
-  },
-  {
-   "from": "zin.t",
-   "to": "attn.b"
-  },
-  {
-   "from": "attn.t",
-   "to": "add1.b"
-  },
-  {
-   "from": "add1.t",
-   "to": "router.b"
-  },
-  {
-   "from": "ephase.b",
-   "to": "router.t-50"
-  },
-  {
-   "from": "cobj2.b",
-   "to": "router.t+50"
-  },
-  {
-   "from": "router.r",
-   "to": "e1.l",
-   "style": "solid"
-  },
-  {
-   "from": "router.r",
-   "to": "e2.l",
-   "style": "dashed"
-  },
-  {
-   "from": "router.r",
-   "to": "e3.l",
-   "style": "solid"
-  },
-  {
-   "from": "router.r",
-   "to": "e4.l",
-   "style": "dashed"
-  },
-  {
-   "from": "router.r",
-   "to": "shared.l",
-   "via": [
-    [
-     "1440",
-     "router.cy"
-    ],
-    [
-     "1440",
-     "shared.cy"
-    ]
-   ],
-   "style": "dashed"
-  },
-  {
-   "from": "e1.r",
-   "to": "mix.l",
-   "style": "solid"
-  },
-  {
-   "from": "e2.r",
-   "to": "mix.l",
-   "style": "dashed"
-  },
-  {
-   "from": "e3.r",
-   "to": "mix.l",
-   "style": "solid"
-  },
-  {
-   "from": "e4.r",
-   "to": "mix.l",
-   "style": "dashed"
-  },
-  {
-   "from": "shared.r",
-   "to": "mix.l"
-  },
-  {
-   "from": "mix.r",
-   "to": "add2.l"
-  },
-  {
-   "from": "add2.t",
-   "to": "zout.b"
-  },
-  {
-   "from": "add1.r",
-   "to": "add2.b",
-   "via": [
-    [
-     "1430",
-     "add1.cy"
-    ],
-    [
-     "1430",
-     "760"
-    ],
-    [
-     "1743",
-     "760"
-    ]
-   ],
-   "style": "dashed"
-  },
-  {
-   "from": "cobj.r",
-   "to": "cobj2.t",
-   "via": [
-    [
-     "954",
-     "cobj.cy"
-    ],
-    [
-     "954",
-     "90"
-    ],
-    [
-     "1361",
-     "90"
-    ]
-   ],
-   "style": "dashed"
-  },
-  {
-   "from": "expert.r-80",
-   "to": "g2b.l-210",
-   "style": "share"
-  },
-  {
-   "from": "vlm.b-100",
-   "to": "lat.l",
-   "via": [
-    [
-     "320",
-     "876"
-    ],
-    [
-     "450",
-     "876"
-    ],
-    [
-     "450",
-     "lat.cy"
-    ]
-   ]
-  },
-  {
-   "from": "vlm.b-60",
-   "to": "phase.l",
-   "via": [
-    [
-     "360",
-     "866"
-    ],
-    [
-     "455",
-     "866"
-    ],
-    [
-     "455",
-     "phase.cy"
-    ]
-   ]
-  },
-  {
-   "from": "vlm.b-20",
-   "to": "cot.l",
-   "via": [
-    [
-     "400",
-     "856"
-    ],
-    [
-     "460",
-     "856"
-    ],
-    [
-     "460",
-     "cot.cy"
-    ]
-   ]
-  },
-  {
-   "from": "expert.l+125",
-   "to": "aux.t",
-   "via": [
-    [
-     "975",
-     "expert.cy+125"
-    ],
-    [
-     "975",
-     "872"
-    ],
-    [
-     "595",
-     "872"
-    ]
-   ]
-  },
-  {
-   "from": "aux.r",
-   "to": "l_aux.l",
-   "via": [
-    [
-     "1160",
-     "aux.cy"
-    ],
-    [
-     "1160",
-     "l_aux.cy"
-    ]
-   ]
-  },
-  {
-   "from": "cot.r",
-   "to": "l_cot.l",
-   "via": [
-    [
-     "1150",
-     "cot.cy"
-    ],
-    [
-     "1150",
-     "l_cot.cy"
-    ]
-   ]
-  },
-  {
-   "from": "phase.r",
-   "to": "l_ph.l",
-   "via": [
-    [
-     "1155",
-     "phase.cy"
-    ],
-    [
-     "1155",
-     "l_ph.cy"
-    ]
-   ]
-  },
-  {
-   "from": "lat.r",
-   "to": "l_lat.l",
-   "via": [
-    [
-     "1165",
-     "lat.cy"
-    ],
-    [
-     "1165",
-     "l_lat.cy"
-    ]
-   ]
-  },
-  {
-   "from": "router.l+20",
-   "to": "l_bal.r",
-   "via": [
-    [
-     "1198",
-     "router.cy+20"
-    ],
-    [
-     "1198",
-     "868"
-    ],
-    [
-     "1385",
-     "868"
-    ],
-    [
-     "1385",
-     "l_bal.cy"
-    ]
-   ],
-   "style": "dashed"
-  },
-  {
-   "from": "cache.l",
-   "to": "l_aux.r",
-   "via": [
-    [
-     "1415",
-     "cache.cy"
-    ],
-    [
-     "1415",
-     "l_aux.cy"
-    ]
-   ],
-   "style": "dashed",
    "tags": [
-    "aux"
+    "main"
    ]
   },
   {
-   "from": "cache.l",
-   "to": "l_cot.r",
-   "via": [
-    [
-     "1415",
-     "cache.cy"
-    ],
-    [
-     "1415",
-     "l_cot.cy"
-    ]
-   ],
-   "style": "dashed",
+   "from": "euler.b",
+   "to": "act.t",
    "tags": [
-    "aux"
+    "main"
    ]
-  },
-  {
-   "from": "cache.l",
-   "to": "l_ph.r",
-   "via": [
-    [
-     "1415",
-     "cache.cy"
-    ],
-    [
-     "1415",
-     "l_ph.cy"
-    ]
-   ],
-   "style": "dashed",
-   "tags": [
-    "aux"
-   ]
-  },
-  {
-   "from": "img_targets.l",
-   "to": "cache.r"
-  },
-  {
-   "from": "img_future.l",
-   "to": "ema.r"
-  },
-  {
-   "from": "ema.l",
-   "to": "l_lat.r",
-   "style": "dashed"
   }
  ],
+ "title": "Fig. 1. SurgicalVLA at inference: past-only object tokens and latent reasoning in a frozen SmolVLM2 prefix; a phase- and object-conditioned MoE action expert",
+ "legend": [
+  "frozen",
+  "train",
+  "tensor",
+  [
+   "side",
+   "conditioning / training-only text"
+  ]
+ ],
+ "caption": "Example: LIBERO-Spatial episode 1261, frame t = 36. 792 M parameters, 442 M trained; the VLM and the perception models stay frozen. Thick arrows: main data path. Fig. 2 details one expert layer; Fig. 3 the training.",
  "tags": [
   {
    "tag": "objects",
    "label": "object tokens",
    "info": "Past-only perception → one token per object, plus the router's object context."
-  },
-  {
-   "tag": "cot",
-   "label": "reasoning",
-   "info": "Explicit CoT (teacher-forced, fades out) and latent queries predicting the frame 1 s ahead."
-  },
-  {
-   "tag": "moe",
-   "label": "MoE",
-   "info": "Every expert FFN: shared expert + top-2 of 4 routed experts, routed on [h ; e_phase ; c_obj]."
-  },
-  {
-   "tag": "aux",
-   "label": "aux supervision",
-   "info": "Label-free pseudo-targets, confidence-weighted, training only."
-  },
-  {
-   "tag": "trainable",
-   "label": "trainable",
-   "info": "442 M of 792 M parameters receive gradients."
-  },
-  {
-   "tag": "loss",
-   "label": "objective",
-   "info": "ℒ = ℒ_FM + Σ w ℒ_aux + 0.1 ℒ_latent + 0.1 ℒ_CoT + 0.1 ℒ_phase + 0.01 ℒ_balance"
   }
  ],
  "steps": [
   {
    "nodes": [
-    "instr",
-    "tok",
     "img_third",
     "img_wrist",
     "siglip",
+    "instr",
+    "tok",
     "state",
     "sproj"
    ],
-   "text": "Instruction, both cameras and the robot state are embedded; the vision and text encoders are SmolVLM2's, frozen."
+   "text": "Cameras, instruction and state are embedded; SmolVLM2's encoders are frozen."
   },
   {
    "nodes": [
-    "img_objects",
+    "img_third_p",
     "percep",
-    "desc",
+    "img_objects",
     "objproj",
     "cobj"
    ],
-   "text": "Frozen perception reads only frame t: the 3 best instances of “black bowl” and the end effector become 4 object tokens."
+   "text": "Frozen perception reads only frame t: 3 instances of the target phrase and the end effector become 4 object tokens."
   },
   {
    "nodes": [
     "strip",
-    "cotx",
-    "lq"
+    "lq",
+    "cotx"
    ],
-   "text": "The prefix: images | text | objects | state, then CoT text (fading out in training) and 4 latent queries."
+   "text": "The prefix: images | text | objects | state, then (training only) CoT text, then 4 latent queries."
   },
   {
    "nodes": [
     "vlm",
     "kv"
    ],
-   "text": "The frozen 16-layer SmolVLM2 decoder runs once per chunk; its keys and values are cached."
+   "text": "The frozen decoder runs once per chunk; its keys and values are cached."
   },
   {
    "nodes": [
@@ -1686,53 +719,17 @@
     "expert",
     "aout",
     "v",
-    "euler"
-   ],
-   "text": "The trained action expert denoises a 50-step chunk, attending to the cached prefix; 10 Euler steps at inference."
-  },
-  {
-   "nodes": [
-    "zin",
-    "attn",
-    "add1",
-    "router",
-    "ephase",
     "cobj2",
-    "e1",
-    "e2",
-    "e3",
-    "e4",
-    "shared",
-    "mix",
-    "add2",
-    "zout"
+    "ephase"
    ],
-   "text": "Inside a layer: attention, then a MoE FFN whose router sees the token, the phase embedding and the object context."
+   "text": "The trained MoE action expert predicts the flow velocity, attending to the cached prefix."
   },
   {
    "nodes": [
-    "img_targets",
-    "cache",
-    "aux",
-    "lat",
-    "ema",
-    "img_future",
-    "cot",
-    "phase"
+    "euler",
+    "act"
    ],
-   "text": "Training only: heads predict label-free targets from the offline cache and the embedding of the frame 1 s ahead."
-  },
-  {
-   "nodes": [
-    "l_fm",
-    "l_aux",
-    "l_lat",
-    "l_cot",
-    "l_ph",
-    "l_bal",
-    "total"
-   ],
-   "text": "All losses are summed with fixed weights."
+   "text": "10 Euler steps turn noise into a 50-step action chunk, executed in full before re-planning."
   }
  ]
 }

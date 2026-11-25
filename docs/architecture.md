@@ -3,7 +3,7 @@
 ![Fig. 1](fig/surgicalvla_arch.svg)
 
 Interactive version (hover for shapes, step through the forward pass): [`fig/surgicalvla_arch.html`](fig/surgicalvla_arch.html).
-The figure is generated from [`fig/fig_surgicalvla.py`](fig/fig_surgicalvla.py) with the dl-paper-diagrams renderer.
+The figure is generated from [`fig/fig_surgicalvla.py`](fig/fig_surgicalvla.py) with the dl-paper-diagrams renderer. Its images are a real example, written by [`fig/fig_assets.py`](fig/fig_assets.py) from LIBERO-Spatial episode 1261 and its feature cache: the SAM 3 target mask, object-token boxes, point tracks, the frame 10 steps ahead and the reasoning trace written from the pseudo-labels.
 
 SurgicalVLA is SmolVLA (SmolVLM2-500M truncated to 16 of 32 layers, plus a flow-matching action
 expert) with switchable additions. **The final model runs with object tokens, auxiliary vision
@@ -20,7 +20,7 @@ passes (`docs/limitations.md`, `docs/results_analysis.md`).
 |---|---|---|---|---|
 | `object_input` | `objects` | one token per object: the 3 best instances of the instruction's noun phrase + the end effector. Each token comes from a DINOv2-S feature pooled in the SAM 3 mask, plus box, centroid, relative depth and score. `grid` is the control (same encoders, 2×2 grid, no objects) | frozen perception on the **current frame only** (past-only); cached for training, computed live at inference | 236 ms per action chunk (SAM 3 + DINOv2 + Depth Anything) |
 | `aux_vision` (+ `aux_source`) | on (`expert`) | heads predicting the target's DINOv2 feature, motion, point-track displacement and gripper offset | label-free pseudo-labels from the cache (may use the whole episode), confidence-weighted | none (training only) |
-| `latent_cot` | on | 4 learned queries appended to the prefix; their mean output predicts the embedding of frame t+10 | EMA target encoder, stop-gradient | 4 prefix tokens |
+| `latent_cot` | on | 4 learned queries appended to the prefix; their mean output predicts the embedding of frame t+10 | the frozen vision encoder, stop-gradient (an EMA copy only when the vision encoder trains) | 4 prefix tokens |
 | `use_cot` + `aux.cot_traces` | on | explicit reasoning text in the prefix, CE-trained | traces written from pseudo-labels, bootstrap round 1 unfiltered (`scripts/make_cot_traces.py`) | 1.07 s per decode every 10 chunks, but **none once the curriculum has finished** |
 | `cot_curriculum_steps` | half of `run.steps` | probability of feeding explicit text decays 1 → 0; after it ends, inference is latent-only | — | as `latent_cot` |
 | `moe_variant` | `upcycled` | action-expert FFN: `upcycled` (1 shared + top-2 of 4, 3× compute), `matched` (1× compute), `dense` (= SmolVLA), `dense_param_matched` | flow matching + Switch load balancing | see below |
@@ -47,6 +47,8 @@ Design constraints:
 | `dense` | 607 M (452 M) | 0.21 s | 5.5 GiB | 117 ms | 236 ms, peak 5.9 GiB |
 | `upcycled` (final) | 890 M (735 M) | 0.25 s | 7.4 GiB | 242 ms | 236 ms, peak 7.6 GiB |
 | `matched` | 654 M (499 M) | 0.27 s | 5.7 GiB | 241 ms | 238 ms, peak 6.2 GiB |
+
+The smoke test builds from `lerobot/smolvla_libero`'s config, which fine-tunes the VLM, so its trainable counts include the 16 VLM text layers. With the SFT configs' freezing (`train_expert_only: true`, frozen vision encoder) the upcycled model has 792 M parameters, of which 442 M are trained and none inside the VLM.
 
 Measured forward cost: 0.96 TFLOP per sample (`run_info.json`). The MoE latency overhead at
 equal FLOPs comes from the per-expert dispatch loop; grouped expert matmuls would remove it.

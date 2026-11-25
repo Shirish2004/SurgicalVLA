@@ -1,0 +1,9 @@
+{
+ "episode": 1261,
+ "frame": 36,
+ "horizon": 10,
+ "instruction": "pick up the black bowl next to the cookie box and place it on the plate",
+ "phrase": "black bowl",
+ "trace": "<cot> phase: approach | object: black bowl | motion: down </cot>",
+ "candidates_valid": 3
+}

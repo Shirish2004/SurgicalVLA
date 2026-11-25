@@ -158,3 +158,33 @@ def test_init_state_is_the_episode_index():
     from scripts.eval_libero_baseline import init_state_of
 
     assert [init_state_of(i) for i in (0, 9, 10, 49)] == [0, 9, 10, 49]
+
+
+FRONTAL = {"libero": "observation.images.image", "robotwin": "observation.images.cam_high",
+           "vlabench": "observation.images.image", "libero_plus": "observation.images.front"}
+
+
+@pytest.mark.parametrize("b", sorted(bench.CACHE))
+def test_every_benchmark_labels_its_frontal_camera_and_training_pins_it(b, monkeypatch):
+    import yaml
+
+    calls = []
+    monkeypatch.setattr(bench, "execute", lambda cmds, dry: calls.extend(cmds))
+    args = argparse.Namespace(benchmark=b, suite={"libero": "libero_spatial", "robotwin": "subset10"}.get(b, "subset"), limit=None, stride=None,
+                              input_stride=None, gpu_mem_gb=None, upload_repo=None, no_traces=True, dry_run=True)
+    bench.cache(args, [])
+    label = calls[0]
+    assert label[label.index("--camera") + 1] == bench.CACHE[b]["camera"] == FRONTAL[b]
+    sft = bench.ROOT / "configs" / "benchmarks" / b / "sft.yaml"
+    if sft.exists():  # LIBERO-plus has no training config of its own
+        assert yaml.safe_load(sft.read_text())["aux"]["expect"]["labeler"]["camera"] == FRONTAL[b]
+
+
+def test_subset_takes_a_fixed_number_per_task_and_is_seeded():
+    from scripts.subset_episodes import subset
+
+    tasks = {e: ("a" if e < 10 else "b" if e < 13 else "c") for e in range(14)}
+    chosen = subset(tasks, 2, 0)
+    assert chosen == subset(tasks, 2, 0) and chosen == sorted(chosen)
+    per = {t: sum(tasks[e] == t for e in chosen) for t in "abc"}
+    assert per == {"a": 2, "b": 2, "c": 1}  # all of a task with fewer episodes

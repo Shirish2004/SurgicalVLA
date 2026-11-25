@@ -1,7 +1,8 @@
 """Feature and label cache for any LeRobot dataset (Parquet shards, ``surgicalvla.pseudolabels.cache``).
 
     pixi run -e dev python scripts/make_pseudolabels.py --repo-id lerobot/libero \
-        --episodes 0:20 --gripper-dims 6 --out pseudolabels --report results/pseudolabels/libero_cost.json
+        --episodes 0:20 --camera observation.images.image --gripper-dims 6 --out pseudolabels \
+        --report results/pseudolabels/libero_cost.json
 
 Two kinds of data, from frozen models only:
 
@@ -74,7 +75,8 @@ def iter_episodes(args, episodes: list[int], lengths: dict[int, int]):
         ds = StreamingLeRobotDataset(
             args.repo_id, root=args.root, revision=args.revision, episodes=[want], streaming=args.root is None, shuffle=False
         )
-        camera = camera or ds.meta.camera_keys[0]
+        if camera not in ds.meta.camera_keys:
+            raise SystemExit(f"--camera {camera!r} is not a camera of {args.repo_id}: {ds.meta.camera_keys}")
         for item in ds:
             ep, fi = int(item["episode_index"]), int(item["frame_index"])
             if ep == want:
@@ -181,7 +183,7 @@ def main() -> None:
     ap.add_argument("--root", help="local dataset root (default: stream from the Hub)")
     ap.add_argument("--revision")
     ap.add_argument("--episodes", default="0:10", help="'a:b' range, comma list, or a JSON file with a list")
-    ap.add_argument("--camera", help="camera key (default: the dataset's first camera)")
+    ap.add_argument("--camera", required=True, help="camera key to label: the frontal view (scripts/benchmark.py CACHE)")
     ap.add_argument("--stride", type=int, default=4, help="targets on every k-th frame")
     ap.add_argument("--input-stride", type=int, default=1, help="policy inputs on every k-th frame")
     ap.add_argument("--gripper-dims", type=int, nargs="+", required=True, help="action dimensions that command grippers")

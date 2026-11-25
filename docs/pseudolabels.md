@@ -57,11 +57,11 @@ SAM 3 runs in image mode with the image features computed once and shared by the
 
 ```bash
 pixi run -e dev python scripts/make_pseudolabels.py --repo-id lerobot/libero \
-    --episodes 84,169,1608 --gripper-dims 6 --out pseudolabels \
+    --episodes 84,169,1608 --camera observation.images.image --gripper-dims 6 --out pseudolabels \
     --report results/pseudolabels/libero_cost_3eps.json
 ```
 
-## Targets (per episode, one camera, every `--stride`-th frame)
+## Targets (per episode, the frontal camera, every `--stride`-th frame)
 
 | Target | Source | Confidence |
 |---|---|---|

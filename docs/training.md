@@ -415,6 +415,25 @@ pixi run -e dev compare results/ablations/libero_spatial/smolvla results/ablatio
 pixi run -e dev figures                                          # results.json -> PDFs, LaTeX, docs/baselines.md
 
 bash scripts/run_libero_plan.sh    # everything in order, resumable: caches, Spatial ladder, other suites, figures
+bash scripts/run_cache_plan.sh     # caches only, every benchmark: RoboTwin, LIBERO x4, VLABench, LIBERO-plus
+```
+
+Caches per benchmark (`scripts/benchmark.py` `CACHE`). Every benchmark labels its **frontal
+camera**, and each training config pins that camera in `aux.expect`:
+
+| Benchmark | Dataset (where) | Labelled camera | Episodes | Strides (targets / inputs) |
+|---|---|---|---|---|
+| LIBERO | `lerobot/libero` (streamed) | `image` (agentview) | per suite, `configs/data/libero_<suite>_episodes.json` | 4 / 1 (10 fps) |
+| RoboTwin | local copy, `ROBOTWIN_ROOT` | `cam_high` (head) | 10 tasks × 50 clean, `robotwin_subset10_episodes.json` | 12 / 3 (30 fps) |
+| VLABench | `lerobot/vlabench_unified`, local copy under `DATA_ROOT` | `image` (front) | 2 per instruction (576), `vlabench_subset_episodes.json` | 4 / 1 (10 fps) |
+| LIBERO-plus | `lerobot/libero_plus`, local copy under `DATA_ROOT` | `front` | 12 per task (480), `libero_plus_subset_episodes.json` | 8 / 2 (20 fps) |
+
+The VLABench and LIBERO-plus subsets are fixed by rule before any result
+(`scripts/subset_episodes.py`: a fixed number per task string, drawn with seed 0).
+
+```bash
+pixi run -e dev cache --benchmark vlabench --suite subset
+pixi run -e dev cache --benchmark libero_plus --suite subset
 ```
 
 - **Cache.**

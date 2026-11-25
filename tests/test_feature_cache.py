@@ -149,21 +149,22 @@ def test_episode_reader_keeps_only_the_labelled_camera_as_uint8(monkeypatch):
 
     def item(ep, f):
         return {"episode_index": torch.tensor(ep), "frame_index": torch.tensor(f), "task": "t",
-                "cam_a": torch.rand(3, 8, 8), "cam_b": torch.rand(3, 8, 8),
+                "cam_a": torch.rand(3, 8, 8), "cam_b": torch.ones(3, 8, 8),
                 "observation.state": torch.zeros(2), "action": torch.zeros(3)}
 
     class Fake:
         def __init__(self, *a, **k):
             self.meta = types.SimpleNamespace(camera_keys=["cam_a", "cam_b"])
-
             self.eps = k.get("episodes")
 
         def __iter__(self):  # frames out of order within the episode
             return iter([item(e, f) for e in self.eps for f in (1, 0)])
 
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", Fake)
-    args = types.SimpleNamespace(repo_id="x", root="r", revision=None, camera=None)
+    args = types.SimpleNamespace(repo_id="x", root="r", revision=None, camera="cam_b")  # the named camera, not the first
     out = list(iter_episodes(args, [0, 1], {0: 2, 1: 2}))
     assert [o[0] for o in out] == [0, 1]
     frames = out[0][1]
-    assert frames.dtype == np.uint8 and frames.shape == (2, 8, 8, 3)
+    assert frames.dtype == np.uint8 and frames.shape == (2, 8, 8, 3) and (frames == 255).all()
+    with pytest.raises(SystemExit, match="not a camera"):
+        list(iter_episodes(types.SimpleNamespace(repo_id="x", root="r", revision=None, camera="front"), [0], {0: 2}))

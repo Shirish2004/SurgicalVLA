@@ -108,7 +108,7 @@ aux:
   cache_name: null                # null -> the newest cache of this dataset under sidecar_root
   upload_repo: null               # Hub dataset holding evicted shards
   expect:                         # the run refuses a cache whose manifest differs in any of these
-    labeler: {stride: 12, input_stride: 3, causal_inputs: true}
+    labeler: {stride: 12, input_stride: 3, causal_inputs: true, camera: observation.images.cam_high}
   track_horizon: 5                # labelled frames ahead for the point-track target
   cot_traces: true                # feed explicit reasoning traces (scripts/make_cot_traces.py)
 

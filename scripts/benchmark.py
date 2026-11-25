@@ -313,28 +313,38 @@ def ablate(args, extra: list[str]) -> None:
 
 
 ROBOTWIN_ROOT = "/media/protomate/Seagate/shirish/robotwin_data"
-# per benchmark: dataset, local root, gripper action dims, grippers as objects, strides (targets, inputs) for its fps
+DATA_ROOT = "/media/protomate/Seagate/shirish/lerobot_data"  # local copies of lerobot/vlabench_unified and lerobot/libero_plus
+# per benchmark: dataset, local root, labelled camera (the frontal view), gripper action dims, grippers as objects,
+# strides (targets, inputs) for its fps
 CACHE = {
-    "libero": dict(repo="lerobot/libero", root=None, dims=["6"], grippers=1, stride=4, input_stride=1,
+    "libero": dict(repo="lerobot/libero", root=None, camera="observation.images.image", dims=["6"], grippers=1, stride=4, input_stride=1,
                    ckpt=("lerobot/smolvla_libero", "a24f1f380461b665158d52acd140152c79e8b36d"),
                    rename={"observation.images.image": "observation.images.camera1", "observation.images.image2": "observation.images.camera2"}),
-    "robotwin": dict(repo="lerobot/robotwin_unified", root=ROBOTWIN_ROOT, dims=["6", "13"], grippers=2, stride=12, input_stride=3,
+    "robotwin": dict(repo="lerobot/robotwin_unified", root=ROBOTWIN_ROOT, camera="observation.images.cam_high", dims=["6", "13"], grippers=2, stride=12, input_stride=3,
                      ckpt=("lerobot/smolvla_robotwin", "eb55d3a74f6cd26c6388aecd116b37b63fac144d"),
                      rename={"observation.images.cam_high": "observation.images.camera1",
                              "observation.images.cam_left_wrist": "observation.images.camera2",
                              "observation.images.cam_right_wrist": "observation.images.camera3"}),
+    "vlabench": dict(repo="lerobot/vlabench_unified", root=f"{DATA_ROOT}/vlabench_unified", camera="observation.images.image", dims=["6"],
+                     grippers=1, stride=4, input_stride=1, ckpt=("lerobot/smolvla_vlabench", "7ef370813eb35823caa94088b50f5389a51e4c47"),
+                     rename=RENAME["vlabench"]),
+    "libero_plus": dict(repo="lerobot/libero_plus", root=f"{DATA_ROOT}/libero_plus", camera="observation.images.front", dims=["6"],
+                        grippers=1, stride=8, input_stride=2,  # 20 fps: the same target and input rates as LIBERO at 10 fps
+                        ckpt=("lerobot/smolvla_libero", "a24f1f380461b665158d52acd140152c79e8b36d"),
+                        rename={"observation.images.front": "observation.images.camera1", "observation.images.wrist": "observation.images.camera2"}),
 }
 
 
 def cache(args, extra: list[str]) -> None:
-    """Feature and label cache for one episode set (a LIBERO suite or the RoboTwin subset), bootstrap traces, overlay videos."""
+    """Feature and label cache for one episode set (a LIBERO suite or a benchmark subset), bootstrap traces, overlay videos."""
     c = CACHE[args.benchmark]
     if args.benchmark == "libero":
         path, name = suite_episodes(args.suite), args.suite
     else:
-        path, name = ROOT / "configs" / "data" / f"robotwin_{args.suite}_episodes.json", f"robotwin_{args.suite}"
+        path, name = ROOT / "configs" / "data" / f"{args.benchmark}_{args.suite}_episodes.json", f"{args.benchmark}_{args.suite}"
         if not path.exists():
-            sys.exit(f"{path} missing: run `python3 scripts/robotwin_subset_episodes.py`")
+            maker = "robotwin_subset_episodes.py" if args.benchmark == "robotwin" else f"subset_episodes.py --benchmark {args.benchmark}"
+            sys.exit(f"{path} missing: run `python3 scripts/{maker}`")
     episodes = str(path.relative_to(ROOT))
     if args.limit:
         episodes = ",".join(map(str, json.loads(path.read_text())[: args.limit]))
@@ -342,7 +352,7 @@ def cache(args, extra: list[str]) -> None:
     input_stride = args.input_stride or c["input_stride"]
     root = ["--root", c["root"]] if c["root"] else []
     cmds = [
-        pixi("dev", "python", "scripts/make_pseudolabels.py", "--repo-id", c["repo"], *root, "--episodes", episodes,
+        pixi("dev", "python", "scripts/make_pseudolabels.py", "--repo-id", c["repo"], *root, "--episodes", episodes, "--camera", c["camera"],
              "--gripper-dims", *c["dims"], "--num-grippers", str(c["grippers"]), "--out", SIDECAR,
              "--stride", str(stride), "--input-stride", str(input_stride),
              "--save-videos", f"results/pseudolabels/videos/{name}", "--report", f"results/pseudolabels/{name}_cost.json",
@@ -420,13 +430,13 @@ def main() -> None:
     pl.add_argument("--steps", type=int, help="override protocol.steps (all arms alike)")
     pl.add_argument("--dry-run", action="store_true")
 
-    lb = sub.add_parser("cache", aliases=["labels"], help="feature/label cache for one LIBERO suite")
-    lb.add_argument("--benchmark", default="libero", choices=["libero", "robotwin"])
-    lb.add_argument("--suite", default="libero_spatial", help="LIBERO suite, or the RoboTwin subset name (e.g. subset10)")
-    lb.add_argument("--stride", type=int, help="targets every k-th frame (default per benchmark: LIBERO 4, RoboTwin 12)")
+    lb = sub.add_parser("cache", aliases=["labels"], help="feature/label cache for one LIBERO suite or benchmark subset")
+    lb.add_argument("--benchmark", default="libero", choices=sorted(CACHE))
+    lb.add_argument("--suite", default="libero_spatial", help="LIBERO suite, or the subset name (RoboTwin subset10; VLABench and LIBERO-plus subset)")
+    lb.add_argument("--stride", type=int, help="targets every k-th frame (default: CACHE[benchmark]['stride'])")
     lb.add_argument("--limit", type=int, default=0, help="first N episodes only (0 = all)")
     lb.add_argument("--gpu-mem-gb", type=float, help="cap labelling's GPU memory, e.g. 8 when training shares the GPU")
-    lb.add_argument("--input-stride", type=int, help="object inputs every k-th frame (default: LIBERO 1, RoboTwin 3)")
+    lb.add_argument("--input-stride", type=int, help="object inputs every k-th frame (default: CACHE[benchmark]['input_stride'])")
     lb.add_argument("--upload-repo", help="Hub dataset for finished shards (bounded local disk)")
     lb.add_argument("--no-traces", action="store_true", help="skip the bootstrap reasoning traces")
     lb.add_argument("--dry-run", action="store_true")

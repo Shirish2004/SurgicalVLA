@@ -17,7 +17,8 @@ stage() {  # stage <name> <command...>: run, log, continue on failure
     local name=$1; shift
     echo "== $(date '+%F %T') start $name: $*" | tee -a "$LOG/plan.log"
     "$@" >> "$LOG/$name.log" 2>&1
-    echo "== $(date '+%F %T') end $name (exit $?)" | tee -a "$LOG/plan.log"
+    local rc=$?
+    echo "== $(date '+%F %T') end $name (exit $rc)" | tee -a "$LOG/plan.log"
 }
 
 # another cache writer on the same cache would corrupt it: wait for it to finish

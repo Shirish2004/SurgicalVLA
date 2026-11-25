@@ -50,6 +50,10 @@ def rle_encode(mask: np.ndarray) -> np.ndarray:
 
 
 def rle_decode(runs: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """Inverse of :func:`rle_encode`. Runs that cover no pixels (``[0]``, written for a frame
+    without a mask) decode to an empty mask."""
+    if int(np.sum(runs)) == 0:
+        return np.zeros(shape, bool)
     vals = np.zeros(len(runs), bool)
     vals[1::2] = True
     return np.repeat(vals, np.asarray(runs, np.int64)).reshape(shape)

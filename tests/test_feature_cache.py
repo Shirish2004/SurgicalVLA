@@ -18,6 +18,12 @@ def test_rle_roundtrip():
         assert np.array_equal(rle_decode(rle_encode(m), m.shape), m)
 
 
+@pytest.mark.parametrize("runs", [np.zeros(1, np.int32), np.zeros(0, np.int32)])
+def test_frames_without_a_mask_decode_to_an_empty_mask(runs):
+    mask = rle_decode(runs, (4, 5))  # [0] is what make_pseudolabels writes for a frame without a mask
+    assert mask.shape == (4, 5) and not mask.any()
+
+
 def test_cache_roundtrip_resume_and_checksum(tmp_path):
     cache = make_cache(tmp_path)
     d = cache.read(3)

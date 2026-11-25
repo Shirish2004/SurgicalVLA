@@ -6,9 +6,9 @@ Every benchmark has its own model, configs and outputs:
     configs/benchmarks/<benchmark>/rl.yaml    ->  outputs/<benchmark>/rl   (final/ = trained model)
 
     # supervised fine-tuning (SurgicalVLA, or the unmodified SmolVLA baseline)
-    python3 scripts/benchmark.py train sft --benchmark {libero,robotwin,vlabench} [--policy smolvla]
+    python3 scripts/benchmark.py train sft --benchmark {libero,libero_plus,robotwin,vlabench} [--policy smolvla]
     # online RL (ReinFlow-GRPO; training.mode sequential | joint | interleaved in rl.yaml)
-    python3 scripts/benchmark.py train rl  --benchmark {libero,robotwin,vlabench}
+    python3 scripts/benchmark.py train rl  --benchmark {libero,libero_plus,robotwin,vlabench}
     # evaluation of any checkpoint (Hub id or local dir; local dirs resolve to their newest policy)
     python3 scripts/benchmark.py eval --benchmark {libero,libero_plus,robotwin,vlabench} --checkpoint ...
     # everything: SFT then RL on every benchmark, then evaluate every model (SFT and RL) on its benchmark
@@ -75,7 +75,7 @@ RENAME = {  # simulator camera -> policy camera (all SurgicalVLA and SmolVLA che
     },
 }
 RENAME["libero_plus"] = RENAME["libero"]
-DATASET = {"libero": "lerobot/libero", "robotwin": "lerobot/robotwin_unified", "vlabench": "lerobot/vlabench_unified"}
+DATASET = {"libero": "lerobot/libero", "libero_plus": "lerobot/libero_plus", "robotwin": "lerobot/robotwin_unified", "vlabench": "lerobot/vlabench_unified"}
 
 
 def pixi(env: str, *cmd: str) -> list[str]:
@@ -144,7 +144,7 @@ def train_cmds(args, extra: list[str]) -> list[list[str]]:
         cfg_path = args.config or f"configs/benchmarks/{b}/rl.yaml"
         resume = ["run.resume=true"] if getattr(args, "resume", False) else []
         rl = [pixi("sim-eval", "python", "scripts/train_reinflow_grpo.py", "--config", cfg_path, *resume, *extra)]
-        if b == "libero":
+        if b in ("libero", "libero_plus"):  # LIBERO-plus rolls out in the local LIBERO simulator
             return rl
         import yaml
 
@@ -159,7 +159,9 @@ def train_cmds(args, extra: list[str]) -> list[list[str]]:
             "libero": ["--policy.freeze_vision_encoder=false", "--policy.train_expert_only=false",
                        "--policy.scheduler_decay_steps=25000", "--batch_size=32", "--steps=25000"],
             "vlabench": ["--batch_size=32", "--steps=20000"],
-        }[b]
+        }
+        recipe["libero_plus"] = recipe["libero"] + [f"--dataset.root={CACHE['libero_plus']['root']}"]
+        recipe = recipe[b]
         return [
             pixi(
                 "dev", "lerobot-train",
@@ -396,7 +398,7 @@ def main() -> None:
 
     t = sub.add_parser("train")
     t.add_argument("stage", choices=["sft", "rl"])
-    t.add_argument("--benchmark", required=True, choices=["libero", "robotwin", "vlabench"])
+    t.add_argument("--benchmark", required=True, choices=["libero", "libero_plus", "robotwin", "vlabench"])
     t.add_argument("--policy", default="surgicalvla", choices=["smolvla", "surgicalvla"])
     t.add_argument("--config")
     t.add_argument("--out")
@@ -417,7 +419,7 @@ def main() -> None:
     e.add_argument("--dry-run", action="store_true")
 
     p = sub.add_parser("pipeline")
-    p.add_argument("--benchmarks", nargs="+", default=["libero", "robotwin", "vlabench"], choices=["libero", "robotwin", "vlabench"])
+    p.add_argument("--benchmarks", nargs="+", default=["libero", "robotwin", "vlabench"], choices=["libero", "libero_plus", "robotwin", "vlabench"])
     p.add_argument("--libero-plus", action="store_true", help="also evaluate the LIBERO models on LIBERO-Plus")
     p.add_argument("--skip-sft", action="store_true")
     p.add_argument("--skip-rl", action="store_true")

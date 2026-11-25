@@ -8,7 +8,7 @@ import pytest
 
 import scripts.benchmark as bench
 
-BENCHES = ["libero", "robotwin", "vlabench"]
+BENCHES = ["libero", "libero_plus", "robotwin", "vlabench"]
 
 
 def _train(**kw):
@@ -38,7 +38,7 @@ def test_rl_runs_for_every_benchmark(b):
     rl = [c for c in cmds if "train_reinflow_grpo.py" in c]
     assert rl and f"configs/benchmarks/{b}/rl.yaml" in rl[0] and "-e sim-eval" in rl[0]
     served = any("lerobot-env-server" in c for c in cmds)
-    assert served == (b != "libero"), "RoboTwin / VLABench rollouts run in LeRobot's Docker images"
+    assert served == (b not in ("libero", "libero_plus")), "RoboTwin / VLABench rollouts run in LeRobot's Docker images"
     if served:
         assert "--stop=true" in cmds[-1]
 
@@ -92,7 +92,7 @@ def test_pipeline_trains_every_benchmark_before_any_eval(capsys):
     lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("$")]
     train = [i for i, line in enumerate(lines) if "scripts/train.py" in line or "train_reinflow_grpo.py" in line]
     evals = [i for i, line in enumerate(lines) if "lerobot_eval.py" in line or "eval_libero_baseline.py run" in line]
-    assert len(train) == 6 and evals and max(train) < min(evals)
+    assert len(train) == 2 * len(BENCHES) and evals and max(train) < min(evals)
     assert any("--env-type libero_plus" in line for line in lines)
 
 
@@ -124,7 +124,7 @@ def test_final_architecture_is_the_sft_default():
     import yaml
 
     spec = bench.load_arms()
-    for b in ("libero", "robotwin", "vlabench"):
+    for b in ("libero", "libero_plus", "robotwin", "vlabench"):
         cfg = yaml.safe_load(open(f"configs/benchmarks/{b}/sft.yaml"))
         for key, want in spec["arms"]["full"]["set"].items():
             section, name = key.split(".")
@@ -176,8 +176,9 @@ def test_every_benchmark_labels_its_frontal_camera_and_training_pins_it(b, monke
     label = calls[0]
     assert label[label.index("--camera") + 1] == bench.CACHE[b]["camera"] == FRONTAL[b]
     sft = bench.ROOT / "configs" / "benchmarks" / b / "sft.yaml"
-    if sft.exists():  # LIBERO-plus has no training config of its own
-        assert yaml.safe_load(sft.read_text())["aux"]["expect"]["labeler"]["camera"] == FRONTAL[b]
+    labeler = yaml.safe_load(sft.read_text())["aux"]["expect"]["labeler"]
+    assert (labeler["stride"], labeler["input_stride"]) == (bench.CACHE[b]["stride"], bench.CACHE[b]["input_stride"])
+    assert labeler["camera"] == FRONTAL[b]
 
 
 def test_subset_takes_a_fixed_number_per_task_and_is_seeded():

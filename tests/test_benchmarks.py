@@ -123,7 +123,7 @@ def test_libero_rl_config_is_valid_for_the_libero_reference_checkpoint():
 
 def test_every_benchmark_rl_config_matches_its_contract():
     """Each benchmark's RL config stays in that benchmark's space."""
-    for bench in ("libero", "robotwin", "vlabench"):
+    for bench in ("libero", "libero_plus", "robotwin", "vlabench"):
         cfg = yaml.safe_load((ROOT / "configs" / "benchmarks" / bench / "rl.yaml").read_text())
         spec = get_benchmark(cfg["benchmark"])
         assert spec.name == bench
@@ -139,7 +139,7 @@ def test_every_benchmark_rl_config_matches_its_contract():
             env_gripper_dims=env["env_gripper_dims"],
         )
         # absolute-action benchmarks must not be clipped to [-1, 1]
-        assert (env["action_clip"] is None) == (bench != "libero")
+        assert (env["action_clip"] is None) == (bench not in ("libero", "libero_plus"))
 
 
 def test_legacy_rl_config_never_points_at_robotwin_checkpoints():
@@ -155,3 +155,20 @@ def test_socket_backend_is_libero_only():
 
     with pytest.raises(BenchmarkMismatch, match="socket backend"):
         trg.build_policy({"benchmark": "robotwin", "checkpoint": "unused", "env": {"backend": "socket"}}, "cpu")
+
+
+def test_libero_plus_rl_never_builds_a_libero_plus_variant():
+    """LIBERO-plus variants are its evaluation set: its RL rolls out in LIBERO, on fresh layouts."""
+    from surgicalvla.rl.lerobot_sim import LeRobotSimClient, _env_config
+
+    cfg = yaml.safe_load((ROOT / "configs" / "benchmarks" / "libero_plus" / "rl.yaml").read_text())
+    client = LeRobotSimClient(cfg["benchmark"], env_kwargs=cfg["env"]["env_kwargs"])
+    assert client.simulator == "libero" and LeRobotSimClient("libero").simulator == "libero"
+    assert cfg["env"]["env_kwargs"]["init_states"] is False
+    env = _env_config(client.simulator, cfg["env"]["suite"], 0, dict(cfg["env"]["env_kwargs"]), None)
+    assert type(env).__name__ == "LiberoEnvConfig" and not env.is_libero_plus
+    # a LIBERO-plus policy is only accepted with LIBERO-plus normalisation
+    spec = get_benchmark("libero_plus")
+    with pytest.raises(BenchmarkMismatch, match="not a libero_plus dataset"):
+        validate_rl_setup(spec, policy_state_dim=8, policy_action_dim=7, policy_cameras=["observation.images.camera1"],
+                          camera_map={"observation.images.camera1": "image"}, action_slice=[0, 7], dataset_id="lerobot/libero")

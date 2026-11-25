@@ -15,6 +15,10 @@ GRPO groups share one start state:
   placement regions, determined by the reset seed, and never touches the evaluation states;
 * RoboTwin / VLABench (and LIBERO without init states): the scene is a function of the reset
   seed, so every member of a group is reset with the same seed.
+
+A LIBERO-plus policy is rolled out in the unperturbed LIBERO simulator (``RL_SIMULATOR``):
+LIBERO-plus's registered variants are its evaluation set, one episode each, so RL never builds
+one.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from surgicalvla.rl.env import Observation, StepResult, TaskInfo
 
 LIBERO_SUITES = ("libero_spatial", "libero_object", "libero_goal", "libero_10")
 SEED_SCENES = 10_000  # "init states" for seed-defined benchmarks
+RL_SIMULATOR = {"libero_plus": "libero"}  # benchmark -> the simulator its RL rollouts run in (default: itself)
 
 
 def _env_config(benchmark: str, task: str, task_id: int | None, kwargs: dict, endpoint: str | None):
@@ -75,13 +80,14 @@ class LeRobotSimClient:
     max_cached_envs: int = 4
 
     def __post_init__(self):
+        self.simulator = RL_SIMULATOR.get(self.benchmark, self.benchmark)
         self._envs: dict[str, object] = {}
         self._current = None
         self._language = ""
 
     # ------------------------------------------------------------------ tasks
     def list_tasks(self, suite: str) -> list[TaskInfo]:
-        if self.benchmark == "libero":
+        if self.simulator == "libero":
             from libero.libero import benchmark as libero_benchmark
 
             bench = libero_benchmark.get_benchmark_dict()[suite]()
@@ -101,11 +107,11 @@ class LeRobotSimClient:
         if len(self._envs) >= self.max_cached_envs:
             _, old = self._envs.popitem()
             old.close()
-        if self.benchmark == "libero":
+        if self.simulator == "libero":
             suite, task_id = task.split(":")
             cfg = _env_config("libero", suite, int(task_id), dict(self.env_kwargs or {}), self.endpoint)
         else:
-            cfg = _env_config(self.benchmark, task, None, dict(self.env_kwargs or {}), self.endpoint)
+            cfg = _env_config(self.simulator, task, None, dict(self.env_kwargs or {}), self.endpoint)
         envs = make_env(cfg, n_envs=1, use_async_envs=False)
         env = next(iter(next(iter(envs.values())).values()))
         self._envs[task] = env
@@ -127,7 +133,7 @@ class LeRobotSimClient:
 
     def reset(self, suite: str, task: str, episode: int = 0, seed: int = 0) -> Observation:
         env = self._env(task)
-        if self.benchmark == "libero" and (self.env_kwargs or {}).get("init_states", True):
+        if self.simulator == "libero" and (self.env_kwargs or {}).get("init_states", True):
             env.set_attr("init_state_id", int(episode))
             reset_seed = int(seed)
         else:
@@ -156,4 +162,4 @@ class LeRobotSimClient:
         self._current = None
 
 
-__all__ = ["LIBERO_SUITES", "LeRobotSimClient"]
+__all__ = ["LIBERO_SUITES", "RL_SIMULATOR", "LeRobotSimClient"]

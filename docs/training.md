@@ -269,23 +269,25 @@ A sensible default: `joint` with λ cosine from 1.0 to 0.1 over the whole run, `
 
 ## 5. Per benchmark
 
-| | LIBERO | RoboTwin 2.0 | VLABench |
-|---|---|---|---|
-| Dataset | `lerobot/libero` (1,693 episodes, 273k frames, 40 tasks, 10 fps) | local copy of `robotwin_unified` (`dataset.root`), 50 clean episodes per task (`episode_blocks: {block: 550, take: 50}`) | `lerobot/vlabench_unified` (10,977 episodes, 3.1 M frames, 295 tasks, 10 fps) |
-| Robot | Franka Panda, single arm | ALOHA, bimanual | Franka |
-| State / action | 8-D state, 7-D end-effector delta | 14-D joints / 14-D absolute joints | 7-D absolute end-effector pose |
-| Cameras → policy | `image`→camera1, `image2`→camera2 | `cam_high`, `cam_left_wrist`, `cam_right_wrist` → camera1–3 | `image`, `second_image`, `wrist_image` → camera1–3 |
-| `model.gripper_dims` | `[6]` | `[6, 13]` | `[6]` |
-| SFT config | `configs/benchmarks/libero/sft.yaml` | `.../robotwin/sft.yaml` | `.../vlabench/sft.yaml` |
-| RL config | `.../libero/rl.yaml` (local simulator, `init_states: false`) | `.../robotwin/rl.yaml` (Docker, all 50 tasks) | `.../vlabench/rl.yaml` (Docker, 21 primitive tasks) |
-| RL horizon | `max_steps` 520 | 1,200 (`action_clip: null`, absolute joints) | as configured |
-| SmolVLA reference | `lerobot/smolvla_libero` | `lerobot/smolvla_robotwin` (trained on all episodes; not the protocol) | `lerobot/smolvla_vlabench` |
-| Baseline recipe (`--policy smolvla`) | full fine-tune, 25k steps, batch 32 | `scripts/train_robotwin_baseline.sh`, 20k steps, batch 64, expert only | 20k steps, batch 32 |
-| Feature cache | 2 LIBERO-Spatial episodes (smoke); full suites pending | none yet | none yet |
-| Known limits | protocol baseline ~66 % on Spatial (`docs/baselines.md` §3) | Hard setting unavailable; one multi-task policy instead of 50 | — |
+| | LIBERO | RoboTwin 2.0 | VLABench | LIBERO-plus |
+|---|---|---|---|---|
+| Dataset | `lerobot/libero` (1,693 episodes, 273k frames, 40 tasks, 10 fps) | local copy of `robotwin_unified` (`dataset.root`), 50 clean episodes per task (`episode_blocks: {block: 550, take: 50}`) | `lerobot/vlabench_unified` (10,977 episodes, 3.1 M frames, 295 tasks, 10 fps) | local copy of `lerobot/libero_plus` (14,347 episodes, the 40 LIBERO tasks under perturbations, 20 fps); the labelled 480-episode subset (`dataset.episodes`) |
+| Robot | Franka Panda, single arm | ALOHA, bimanual | Franka | Franka Panda, single arm |
+| State / action | 8-D state, 7-D end-effector delta | 14-D joints / 14-D absolute joints | 7-D absolute end-effector pose | as LIBERO |
+| Cameras → policy | `image`→camera1, `image2`→camera2 | `cam_high`, `cam_left_wrist`, `cam_right_wrist` → camera1–3 | `image`, `second_image`, `wrist_image` → camera1–3 | `front`→camera1, `wrist`→camera2 |
+| `model.gripper_dims` | `[6]` | `[6, 13]` | `[6]` | `[6]` |
+| SFT config | `configs/benchmarks/libero/sft.yaml` | `.../robotwin/sft.yaml` | `.../vlabench/sft.yaml` | `.../libero_plus/sft.yaml` (`latent_cot_horizon` 20 = 1 s) |
+| RL config | `.../libero/rl.yaml` (local simulator, `init_states: false`) | `.../robotwin/rl.yaml` (Docker, all 50 tasks) | `.../vlabench/rl.yaml` (Docker, 21 primitive tasks) | `.../libero_plus/rl.yaml`: the unperturbed local LIBERO simulator, `init_states: false`; never a LIBERO-plus variant, since those are its evaluation set |
+| RL horizon | `max_steps` 520 | 1,200 (`action_clip: null`, absolute joints) | as configured | as LIBERO |
+| SmolVLA reference | `lerobot/smolvla_libero` | `lerobot/smolvla_robotwin` (trained on all episodes; not the protocol) | `lerobot/smolvla_vlabench` | `lerobot/smolvla_libero` (trained on `lerobot/libero`) |
+| Baseline recipe (`--policy smolvla`) | full fine-tune, 25k steps, batch 32 | `scripts/train_robotwin_baseline.sh`, 20k steps, batch 64, expert only | 20k steps, batch 32 | the LIBERO recipe on `lerobot/libero_plus` |
+| Feature cache | the four suites (`run_cache_plan.sh`) | 10-task subset, 500 episodes | 576-episode subset | 480-episode subset (`run_cache_plan.sh`) |
+| Known limits | protocol baseline ~66 % on Spatial (`docs/baselines.md` §3) | Hard setting unavailable; one multi-task policy instead of 50 | — | whether the training perturbations overlap the evaluation variants is not yet checked |
 
-Data paths: LIBERO and VLABench are read from the Hugging Face cache. RoboTwin reads
-`/media/protomate/Seagate/shirish/robotwin_data/` (set in its config and in the launcher).
+Data paths: LIBERO and VLABench training read from the Hugging Face cache. RoboTwin reads
+`/media/protomate/Seagate/shirish/robotwin_data/` (set in its config and in the launcher), and
+LIBERO-plus `/media/protomate/Seagate/shirish/lerobot_data/libero_plus` (`dataset.root`). The RL
+demonstration stream (`demo:`) reads from the Hub.
 
 ## 6. Logging: where the graphs are
 

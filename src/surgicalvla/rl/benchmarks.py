@@ -38,6 +38,18 @@ LIBERO = BenchmarkSpec(
     gripper_dims=(6,),
 )
 
+# LIBERO-plus: the LIBERO robot, cameras and spaces; its own data and normalisation
+LIBERO_PLUS = BenchmarkSpec(
+    name="libero_plus",
+    state_dim=LIBERO.state_dim,
+    action_dim=LIBERO.action_dim,
+    state_layout=LIBERO.state_layout,
+    action_layout=LIBERO.action_layout,
+    cameras=LIBERO.cameras,
+    datasets=("lerobot/libero_plus",),
+    gripper_dims=LIBERO.gripper_dims,
+)
+
 ROBOTWIN = BenchmarkSpec(
     name="robotwin",
     state_dim=14,
@@ -65,7 +77,7 @@ VLABENCH = BenchmarkSpec(
     gripper_dims=(6,),
 )
 
-BENCHMARKS = {spec.name: spec for spec in (LIBERO, ROBOTWIN, VLABENCH)}
+BENCHMARKS = {spec.name: spec for spec in (LIBERO, LIBERO_PLUS, ROBOTWIN, VLABENCH)}
 
 
 class BenchmarkMismatch(ValueError):
@@ -125,4 +137,4 @@ def validate_rl_setup(
         raise BenchmarkMismatch(f"RL setup is not valid for {spec.name}:\n  - " + "\n  - ".join(problems))
 
 
-__all__ = ["BENCHMARKS", "LIBERO", "ROBOTWIN", "VLABENCH", "BenchmarkMismatch", "BenchmarkSpec", "get_benchmark", "validate_rl_setup"]
+__all__ = ["BENCHMARKS", "LIBERO", "LIBERO_PLUS", "ROBOTWIN", "VLABENCH", "BenchmarkMismatch", "BenchmarkSpec", "get_benchmark", "validate_rl_setup"]

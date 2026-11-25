@@ -1,0 +1,134 @@
+# SFT stage for LIBERO-plus (SurgicalVLA = smolvla_moe). One model per benchmark: outputs/libero_plus/sft.
+#   python3 scripts/benchmark.py train sft --benchmark libero_plus
+# Branches without a training signal yet (CoT, phase, pose, object tokens) are
+# EXPERIMENTAL: see docs/limitations.md before claiming them.
+benchmark: libero_plus               # used for the Hub model name
+
+project:
+  wandb_project: "surgical-vla"      # W&B entity/project grouping for runs
+  wandb_mode: "online"                # "online" | "offline" | "disabled"; "disabled" skips W&B entirely
+  entity: "building-text"            # optional W&B entity; null -> default account
+  run_name: "surgical_vla_libero_plus"           # base name; stage suffix is appended
+  notes: "MoE surgical VLA (SmolVLA backbone)"
+  tags: []
+  log_every: 20                     # log scalar metrics every N steps
+  val_every: 200                     # run validation preview every N steps
+  save_every: 2000                   # save model checkpoint every N steps
+
+run:
+  steps: 50000                       # total training steps
+  seed: 0
+  batch_size: 24
+  device: "cuda"                     # "cuda" or "cpu"
+  ckpt_dir: "outputs/libero_plus/sft"
+  streaming: false                   # true -> pull frames from the Hub on demand
+  streaming_buffer_size: 1000        # shuffle-buffer size, in frames, when streaming
+  streaming_seed: 42                 # seed for the streaming shuffle buffer
+  grad_accum: 4                      # accumulate gradients over N steps before optimizer step
+  
+
+# lerobot/libero_plus: 14,347 episodes / 40 LIBERO tasks recorded under LIBERO-plus perturbations
+# (camera, layout, robot init, language, light, background, noise), single Panda arm, 20 fps.
+# Same 8-D state and 7-D eef-delta action layout as lerobot/libero; cameras front (agentview) and wrist,
+# in the same orientation as lerobot/libero. Evaluated with the LIBERO-plus protocol
+# (scripts/benchmark.py eval --benchmark libero_plus).
+dataset:
+  root: "/media/protomate/Seagate/shirish/lerobot_data/libero_plus"
+  # the labelled subset, 12 episodes per task (scripts/subset_episodes.py); remove to train on every
+  # episode once all of them are labelled
+  episodes: configs/data/libero_plus_subset_episodes.json
+  camera_map:                         # dataset key -> policy key
+    observation.images.front: observation.images.camera1
+    observation.images.wrist: observation.images.camera2
+
+# Model / architecture (fields passed straight to SurgicalVLAConfig)
+# NOTE: action dim is derived from the dataset's action feature (max_action_dim),
+# not from a config field -- so there is deliberately no num_actions/hidden_size/
+# max_action_seq key here. Camera keys/counts are also derived from the dataset
+# (see dataset.camera_map above), not listed here.
+model:
+  policy_type: "smolvla_moe"            # "surgical" (skill-routed) | "smolvla_moe" (object-6D + CoT + phase MoE)
+  vlm_model_name: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+  chunk_size: 50
+  n_action_steps: 50                 # executed per chunk at inference only; 50 = protocol horizon for every method (docs/baselines.md §3)
+  n_obs_steps: 1                 
+  freeze_vision_encoder: true
+  attention_mode: "cross_attn"
+  num_vlm_layers: 16
+  expert_width_multiplier: 0.75
+  load_vlm_weights: true
+  adapt_to_pi_aloha: false            # when in pretraining stage with aloha setup
+  add_image_special_tokens: true
+  train_expert_only: true
+  num_experts: 5
+  gripper_dims: [6]
+  scheduler_decay_steps : 50000
+# MoE action expert (keys here are SurgicalVLAConfig field names).
+moe:
+  moe_every_n_layers: 2
+  moe_expert_ratio: 0.25
+  moe_max_k: 2
+  moe_top_p: 0.7
+  moe_prior_bias: 1.0
+  moe_load_balance_coef: 0.01
+  skill_loss_coef: 0.1
+  moe_z_coef: 1.0e-3
+  skill_freeze_steps: 20000
+
+# Only read when model.policy_type == "smolvla_moe" (SmolVLAMoEConfig fields).
+smolvla_moe:
+  num_object_tokens: 4             # derived from object_input when it is set
+  num_objects: 2                  # derived from object_input when it is set (obj_candidates + 1)
+  obj_tracker_mode: "passthrough" # passthrough | cached | mock | live
+  use_cot: true                   # explicit reasoning text (needs aux.cot_traces)
+  cot_max_tokens: 48
+  cot_refresh_interval: 10
+  num_experts: 4
+  num_shared_experts: 1
+  moe_top_k: 2
+  moe_aux_loss_weight: 0.01
+  phase_loss_weight: 0.1
+  pose_aux_loss_weight: 0.2
+  expert_cross_attn_vlm_layers: 0  # must equal num_vlm_layers (0 -> all)
+  use_reinflow: false
+  # Final architecture: vision and CoT ON. Every switch stays for the ablations
+  # (configs/ablations/arms.yaml sets all of them per arm; docs/architecture.md).
+  moe_variant: "upcycled"         # upcycled | matched | dense (= SmolVLA) | dense_param_matched
+  object_input: "objects"         # none | objects (target candidates + end effector) | grid (control)
+  obj_candidates: 3               # target-phrase instances given to the policy per frame
+  aux_vision: true                # auxiliary vision heads on pseudo-label targets (training only)
+  latent_cot: true                # latent reasoning tokens predicting a future visual latent
+  cot_curriculum_steps: 25000     # explicit -> latent over this many steps (half of run.steps); latent-only at inference
+  vlm_lora_rank: 0                # LoRA on the frozen VLM (0 = off); see docs/vlm_changes.md and the *_lora arms
+  vlm_lora_parts: [text]          # text (decoder) | vision (SigLIP)
+  latent_cot_horizon: 20          # 1 s ahead at 20 fps
+
+# Pseudo-label sidecar (scripts/make_pseudolabels.py); used only when a switch above needs it
+aux:
+  sidecar_root: "pseudolabels"    # feature cache root (scripts/make_pseudolabels.py); also drawn on logged frames
+  cache_name: null                # null -> the newest cache of this dataset under sidecar_root
+  upload_repo: null               # Hub dataset holding evicted shards, e.g. "Shirish24/surgical-vla-cache"
+  expect:                         # the run refuses a cache whose manifest differs in any of these
+    labeler: {stride: 8, input_stride: 2, causal_inputs: true, camera: observation.images.front}
+  track_horizon: 5                # labelled frames ahead for the point-track target
+  cot_traces: true                # feed explicit reasoning traces (scripts/make_cot_traces.py)
+
+# Visual panels / CSV / routing-drift plots
+logging:
+  enable_visual_logging: true
+  log_dir: "logs"
+  log_every_n_steps: 400             # images: camera frames, action plots, MoE heatmap, pseudo-label overlays
+  grad_diag_every: 400               # per-loss gradient norms and pairwise cosines (one extra forward; 0 = off)
+  max_log_panels: 50                 # rolling cap per camera -- not yet enforced in logging.py
+
+# Hugging Face Hub (src/surgicalvla/utils/hub.py, docs/training.md#hub). Each trained model is its
+# own repository <namespace>/surgical-vla-<model-name>, all gathered in the "surgical-vla"
+# collection. The final checkpoint is pushed when training completes; optimizer state stays local.
+hub:
+  push: true
+  namespace: "Shirish24"
+  model_name: null                  # null -> derived from this run's settings, e.g. libero_plus-sft-upcycled-s0;
+                                    # or a template such as "{benchmark}-sft-{variant}-mytest-s{seed}"
+  private: true                     # create the repository private; make it public on the Hub when ready
+  push_every_save: false            # true -> also push every intermediate checkpoint
+  collection: "surgical-vla"

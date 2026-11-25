@@ -23,12 +23,14 @@ VERBS = (
     "put", "place", "move", "push", "pull", "open", "close", "turn on", "turn off", "turn", "press",
     "click", "stack", "insert", "pour", "rotate", "flip", "slide", "drag", "wipe", "stir", "hang",
     "shake", "beat", "hit", "strike", "stamp", "use", "adjust", "raise", "place", "set",
+    "position", "transfer", "drop", "catch", "secure", "arrange", "rearrange", "bring", "carry", "guide", "handle",
+    "seize", "grip", "lay down", "lay", "shift", "stick", "select", "choose", "add", "cluster", "get", "fetch",
 )
 STOP_AFTER = (
     " and ", " then ", " on ", " onto ", " in ", " into ", " to ", " from ", " with ", " at ", " under ",
-    " between ", " next to ", " near ", " of the ", " that ", " which ", " so ", " using ", " by ", ",", ".",
+    " between ", " next to ", " near ", " of the ", " that ", " which ", " so ", " using ", " by ", " for ", ",", ".",
 )
-ARTICLES = ("the ", "a ", "an ", "both ", "all ", "some ", "your ")
+ARTICLES = ("the ", "a ", "an ", "both ", "all ", "some ", "your ", "two ")
 STOPWORDS = {"the", "a", "an", "of", "and", "to", "on", "in", "with", "it", "its"}
 COLOURS = {
     "red", "green", "blue", "yellow", "white", "black", "orange", "purple", "pink", "brown", "grey", "gray",

@@ -74,8 +74,8 @@ pixi run -e dev python scripts/make_pseudolabels.py --repo-id lerobot/libero \
 | point tracks | TAPNext++ on a grid inside the first confident target mask | per-point visibility |
 | phase boundaries | gripper command events + arm-speed minima | step sharpness / minimum depth |
 
-Frames are read with `StreamingLeRobotDataset`; episodes may arrive interleaved and are
-assembled by frame count.
+Frames are read with `StreamingLeRobotDataset`, one episode at a time, and ordered by
+`frame_index`. Every benchmark labels its frontal camera (`docs/training.md` §9).
 
 ## Design findings from development (LIBERO)
 
@@ -88,6 +88,22 @@ assembled by frame count.
   is carried by the gripper fixed all three failure cases re-checked (visually verified),
   including one where the text score alone preferred a different bowl.
 - The rule-based parser must keep coordinated adjectives ("yellow and white mug").
+
+## Phrase coverage beyond LIBERO
+
+The verb list was written for LIBERO. On the RoboTwin subset it found no phrase for 93 of 500
+instructions ("Grip …", "Transfer …", "Position …", "Seize …"), and the VLM rescued only 3, so
+90 episodes (18 %) had no target, no object inputs and no vision targets. On VLABench it
+missed 37 of 295 instructions ("select", "add", "rearrange"). Adding those verbs, "two" as a
+determiner (RoboTwin writes "two the shoe") and " for " as a stop leaves 12 of 500 and 2 of 295
+without a phrase. Those instructions name no object after a verb ("Assign one arm to each of
+…", "Make sure X is placed …"). LIBERO's and LIBERO-plus's 40 phrases are unchanged
+(`tests/test_pseudolabels.py`), so their caches are unaffected.
+
+Labels are a deterministic function of the frames, the phrase and the pinned models, so only
+episodes whose phrase changed are labelled again: `make_pseudolabels.py --relabel <episodes>
+--relabel-reason "…"` (`FeatureCache.forget`). The manifest logs every relabel, and their
+traces are re-scored. On RoboTwin that is 136 episodes.
 
 ## Cost
 

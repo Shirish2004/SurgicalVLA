@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from surgicalvla.perception.object_inputs import ObjectInputConfig, describe, grid_masks, select_objects
-from surgicalvla.pseudolabels.cache import CacheMismatch, FeatureCache, check_manifest, rle_decode, rle_encode
+from surgicalvla.pseudolabels.cache import CacheMismatch, FeatureCache, check_manifest, read_traces, rle_decode, rle_encode
 from surgicalvla.pseudolabels.reader import SidecarTargets
 from tests.cache_fixtures import MANIFEST, make_cache
 
@@ -22,6 +22,16 @@ def test_rle_roundtrip():
 def test_frames_without_a_mask_decode_to_an_empty_mask(runs):
     mask = rle_decode(runs, (4, 5))  # [0] is what make_pseudolabels writes for a frame without a mask
     assert mask.shape == (4, 5) and not mask.any()
+
+
+def test_a_forgotten_episode_is_relabelled_and_its_old_rows_and_traces_are_not_read(tmp_path):
+    make_cache(tmp_path, phrase="old")
+    gone = FeatureCache(tmp_path, "org/ds", "test").forget([3, 99], "new phrase rule")
+    reopened = FeatureCache(tmp_path, "org/ds", "test")
+    assert gone == [3] and not reopened.done(3) and 3 not in read_traces(reopened)
+    assert reopened.manifest["relabelled"][0]["reason"] == "new phrase rule"
+    make_cache(tmp_path, phrase="new")  # labels episode 3 again, into a new shard
+    assert FeatureCache(tmp_path, "org/ds", "test").read(3)["ep.phrase"] == "new"
 
 
 def test_cache_roundtrip_resume_and_checksum(tmp_path):

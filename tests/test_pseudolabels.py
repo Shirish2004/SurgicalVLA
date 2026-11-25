@@ -71,10 +71,35 @@ def test_mask_bits_roundtrip():
         ("turn on the stove", "stove"),
         ("put the yellow and white mug in the microwave and close it", "yellow and white mug"),
         ("pick up the black bowl and the plate", "black bowl"),
+        # RoboTwin and VLABench verbs
+        ("Grip the red block with the left arm and transfer it.", "red block"),
+        ("Transfer the remotecontrol for controlling devices using the left arm to the metal displaystand.", "remotecontrol"),
+        ("Handle two the shoe with textured sole, tips directed left, and drop them into the box", "shoe"),
+        ("Seize the smooth plastic microphone handle and offer it to the other arm", "smooth plastic microphone handle"),
+        ("Please select the painting of style realism.", "painting of style realism"),
+        ("Add salt to the dish", "salt"),
     ],
 )
 def test_rule_phrase(instruction, phrase):
     assert rule_phrase(instruction) == phrase
+
+
+# LIBERO's 40 tasks (also LIBERO-plus's): the phrases its caches were labelled with
+LIBERO_PHRASES = {
+    "put the white mug on the left plate and put the yellow and white mug on the right plate": "white mug",
+    "turn on the stove and put the moka pot on it": "stove",
+    "put both moka pots on the stove": "moka pots",
+    "pick up the book and place it in the back compartment of the caddy": "book",
+    "open the top drawer and put the bowl inside": "top drawer",
+    "push the plate to the front of the stove": "plate",
+    "pick up the black bowl next to the cookie box and place it on the plate": "black bowl",
+    "put both the alphabet soup and the cream cheese box in the basket": "alphabet soup",
+    "put the black bowl in the bottom drawer of the cabinet and close it": "black bowl",
+}
+
+
+def test_libero_phrases_are_unchanged():
+    assert {i: rule_phrase(i) for i in LIBERO_PHRASES} == LIBERO_PHRASES
 
 
 def test_vlm_answer_must_be_grounded():

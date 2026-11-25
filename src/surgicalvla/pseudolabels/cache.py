@@ -204,6 +204,22 @@ class FeatureCache:
     def episodes(self) -> list[int]:
         return sorted(int(e) for e in self.manifest["episodes"])
 
+    def forget(self, episodes: list[int], reason: str) -> list[int]:
+        """Mark cached episodes as not done, and their traces as not scored, so both are recomputed.
+
+        Their old rows stay in their shards but are no longer read: an episode is read from the
+        shard the manifest maps it to, and a re-added episode is mapped to its new shard. The
+        manifest keeps a log of what was forgotten and why. Returns the episodes that were cached.
+        """
+        gone = [int(e) for e in episodes if self.manifest["episodes"].pop(str(int(e)), None) is not None]
+        for s in self.manifest.get("cot_shards", []):
+            s["episodes"] = [e for e in s["episodes"] if int(e) not in set(gone)]
+        if gone:
+            self.manifest.setdefault("relabelled", []).append(
+                {"episodes": gone, "reason": reason, "time": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+            self._save_manifest()
+        return gone
+
     # ------------------------------------------------------------------ write
     def add(self, episode: dict, frames: dict) -> None:
         """Queue one episode. ``episode``: scalars and lists; ``frames``: column -> per-row array.
@@ -382,7 +398,7 @@ def read_traces(cache: FeatureCache) -> dict[int, list[dict]]:
         if file_sha256(path) != s["sha256"]:
             raise CacheMismatch(f"{path}: checksum differs from the manifest")
         rows = pq.read_table(path).to_pylist()
-        for ep in {int(r["episode"]) for r in rows}:
+        for ep in {int(r["episode"]) for r in rows} & {int(e) for e in s["episodes"]}:  # forgotten episodes are not read
             out[ep] = [r for r in rows if int(r["episode"]) == ep]
     return out
 

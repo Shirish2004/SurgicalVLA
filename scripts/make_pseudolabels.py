@@ -192,6 +192,9 @@ def main() -> None:
     ap.add_argument("--no-vlm", action="store_true", help="noun phrase from the rule only")
     ap.add_argument("--out", default="pseudolabels", help="cache root")
     ap.add_argument("--name", help="cache name (default: v3-<first 12 hex of the config hash>)")
+    ap.add_argument("--relabel", help="episodes to label again although cached (same forms as --episodes); "
+                                      "their traces are re-scored too")
+    ap.add_argument("--relabel-reason", help="why, recorded in the manifest's relabel log")
     ap.add_argument("--max-gb", type=float, default=20.0)
     ap.add_argument("--upload-repo", help="Hub dataset for finished shards, e.g. Shirish24/surgical-vla-cache")
     ap.add_argument("--report", help="write timing / disk cost per episode and per 1,000 episodes as JSON")
@@ -215,6 +218,11 @@ def main() -> None:
     manifest = provenance(args, vision_cfg, input_cfg, None if args.no_tracks else str(DEFAULT_CKPT))
     cache = FeatureCache(args.out, args.repo_id, args.name or f"v3-{manifest['config_hash'][:12]}", manifest=manifest,
                          max_gb=args.max_gb, upload_repo=args.upload_repo)
+    if args.relabel:
+        spec = args.relabel
+        again = [int(e) for e in json.loads(Path(spec).read_text())] if spec.endswith(".json") else parse_episodes(spec, meta.total_episodes)
+        gone = cache.forget(again, args.relabel_reason or "relabel requested")
+        print(f"relabelling {len(gone)} cached episodes", flush=True)
     todo = [e for e in episodes if not cache.done(e)]
     print(f"{len(todo)} of {len(episodes)} episodes to label ({len(episodes) - len(todo)} already in {cache.dir})", flush=True)
     if not todo:

@@ -204,11 +204,27 @@ def train_cmds(args, extra: list[str]) -> list[list[str]]:
         cmd += ["--root", ROBOTWIN_ROOT, f"dataset.root={ROBOTWIN_ROOT}"]
     else:  # the local copy under SURGICALVLA_DATA_ROOT when there is one, else the Hugging Face cache
         cmd.append(f"dataset.root={local_root(b) or 'null'}")
-    if getattr(args, "resume", False):  # newest checkpoints/step_N under the output directory
-        cmd += ["--resume", "latest"]
+    if getattr(args, "resume", False):  # safe to repeat: fresh start, continue, or skip when finished
+        out, steps = sft_target(args.config or f"configs/benchmarks/{b}/sft.yaml", args.out, extra)
+        done = sorted(int(p.name[5:]) for p in (ROOT / out / "checkpoints").glob("step_*") if p.name[5:].isdigit())
+        if done and done[-1] >= steps and (ROOT / out / "checkpoints" / f"step_{done[-1]}" / "model.safetensors").exists():
+            print(f"# {b}: finished ({out}/checkpoints/step_{done[-1]}), nothing to resume", flush=True)
+            return []
+        if done:
+            print(f"# {b}: resuming from step {done[-1]} of {steps}", flush=True)
+            cmd += ["--resume", "latest"]
     if args.out:
         cmd.append(f"run.ckpt_dir={args.out}")
     return [pixi("dev", *cmd, *extra)]
+
+
+def sft_target(config: str, out: str | None, extra: list[str]) -> tuple[str, int]:
+    """Output directory and total steps of an SFT run (config + run.* overrides)."""
+    import yaml
+
+    run = (yaml.safe_load((ROOT / config).read_text()) or {}).get("run", {})
+    over = dict(a.split("=", 1) for a in extra if a.startswith("run.") and "=" in a)
+    return out or over.get("run.ckpt_dir", run.get("ckpt_dir", "checkpoints")), int(over.get("run.steps", run.get("steps", 0)))
 
 
 # ----------------------------------------------------------------------------- eval

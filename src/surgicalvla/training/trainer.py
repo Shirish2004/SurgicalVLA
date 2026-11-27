@@ -1,6 +1,7 @@
 """Training loop for SurgicalVLA: optimizer/scheduler from config presets, grad clipping, periodic logging."""
 
 import os
+import shutil
 import random
 import re
 import time
@@ -135,8 +136,10 @@ class Trainer:
         push_every_save: bool = False,
         grad_diag_every: int = 0,
         run_info: dict | None = None,
+        keep_last: int | None = None,
     ):
         self.grad_accum = grad_accum
+        self.keep_last = keep_last  # keep only the newest N checkpoints (None: all); the final one is never deleted
         self.policy = policy.to(device)
         self.device = device
         self.steps = steps
@@ -255,7 +258,11 @@ class Trainer:
         return None
 
     def _save(self, step: int):
-        ckpt = f"{self.output_dir}/checkpoints/step_{step}"
+        # Written under step_N.tmp and renamed when complete: a run killed mid-save leaves no
+        # half-written step_N for --resume to pick up (resume only matches step_<digits>).
+        final = f"{self.output_dir}/checkpoints/step_{step}"
+        ckpt = final + ".tmp"
+        shutil.rmtree(ckpt, ignore_errors=True)
         os.makedirs(ckpt, exist_ok=True)
         self.policy.save_pretrained(ckpt)
         # Save the normaliser with the weights: lerobot-eval and the RL stage read it from
@@ -279,8 +286,22 @@ class Trainer:
         if run_id:
             with open(os.path.join(ckpt, "wandb_run_id.txt"), "w") as f:
                 f.write(run_id)
+        shutil.rmtree(final, ignore_errors=True)
+        os.replace(ckpt, final)
+        ckpt = final
+        self._prune_checkpoints(step)
         if self.push_fn is not None and (step == self.steps or self.push_every_save):
             self.push_fn(ckpt, step)
+
+    def _prune_checkpoints(self, newest: int) -> None:
+        """Delete all but the newest ``keep_last`` checkpoints (each ~12 GB with optimizer and EMA)."""
+        if not self.keep_last:
+            return
+        base = os.path.join(self.output_dir, "checkpoints")
+        steps = sorted(int(m.group(1)) for n in os.listdir(base) if (m := re.fullmatch(r"step_(\d+)", n)))
+        for s in steps[: max(0, len(steps) - int(self.keep_last))]:
+            if s not in (newest, self.steps):
+                shutil.rmtree(os.path.join(base, f"step_{s}"), ignore_errors=True)
 
     def _safe_log_scalars(self, scalars: dict, step: int):
         try:

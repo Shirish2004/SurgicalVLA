@@ -218,7 +218,10 @@ def test_cache_workers_run_labels_then_traces_in_parallel_shards(monkeypatch):
 def test_training_reads_the_local_dataset_copy_when_present(b, tmp_path, monkeypatch):
     monkeypatch.setattr(bench, "DATA_ROOT", str(tmp_path))
     assert f"dataset.root=null" in _train(benchmark=b)[0]  # no local copy: Hugging Face cache
-    local = tmp_path / bench.LOCAL_DIR[b]
+    monkeypatch.setattr(bench, "ROOT", tmp_path / "repo")
+    for k in bench.ROOT_ENV.values():
+        monkeypatch.delenv(k, raising=False)
+    local = tmp_path / bench.LOCAL_DIR[b][0]
     (local / "meta").mkdir(parents=True)
     (local / "meta" / "info.json").write_text("{}")
     assert f"dataset.root={local}" in _train(benchmark=b)[0]

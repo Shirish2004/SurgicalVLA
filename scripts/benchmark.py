@@ -18,9 +18,10 @@ Every benchmark has its own model, configs and outputs:
     # feature/label cache, reasoning traces, overlay videos (--workers N: N GPU processes on one cache)
     python3 scripts/benchmark.py cache --suite libero_spatial [--workers 4]
 
-Data locations (environment): SURGICALVLA_DATA_ROOT holds local copies of the LeRobot datasets
-(<root>/libero, <root>/vlabench_unified, <root>/libero_plus; each used when its meta/info.json
-exists, otherwise the dataset is read through the Hugging Face cache); ROBOTWIN_ROOT the RoboTwin copy.
+Data locations: local copies of the LeRobot datasets under SURGICALVLA_DATA_ROOT (default <repo>/data):
+<root>/libero, <root>/vla_bench (or vlabench_unified), <root>/libero_plus; or one each via LIBERO_ROOT,
+VLABENCH_ROOT, LIBERO_PLUS_ROOT. Each is used when its meta/info.json exists, otherwise the dataset
+is read through the Hugging Face cache. ROBOTWIN_ROOT: the RoboTwin copy.
 
 ``--dry-run`` prints the commands; arguments after ``--`` go to the trainer / lerobot-eval.
 
@@ -340,17 +341,22 @@ def ablate(args, extra: list[str]) -> None:
 
 
 ROBOTWIN_ROOT = os.environ.get("ROBOTWIN_ROOT", "/media/protomate/Seagate/shirish/robotwin_data")
-# local copies of the LeRobot datasets: <DATA_ROOT>/libero, <DATA_ROOT>/vlabench_unified, <DATA_ROOT>/libero_plus
-DATA_ROOT = os.environ.get("SURGICALVLA_DATA_ROOT", "/media/protomate/Seagate/shirish/lerobot_data")
-LOCAL_DIR = {"libero": "libero", "vlabench": "vlabench_unified", "libero_plus": "libero_plus"}
+# local copies of the LeRobot datasets: <DATA_ROOT>/libero, <DATA_ROOT>/vla_bench (or vlabench_unified),
+# <DATA_ROOT>/libero_plus. Default: <repo>/data when it exists. LIBERO_ROOT, VLABENCH_ROOT and
+# LIBERO_PLUS_ROOT point at one dataset directly.
+DATA_ROOT = os.environ.get("SURGICALVLA_DATA_ROOT") or (
+    str(ROOT / "data") if (ROOT / "data").is_dir() else "/media/protomate/Seagate/shirish/lerobot_data")
+LOCAL_DIR = {"libero": ["libero"], "vlabench": ["vla_bench", "vlabench_unified", "vlabench"], "libero_plus": ["libero_plus"]}
+ROOT_ENV = {"libero": "LIBERO_ROOT", "vlabench": "VLABENCH_ROOT", "libero_plus": "LIBERO_PLUS_ROOT"}
 
 
 def local_root(benchmark: str) -> str | None:
     """Local copy of the benchmark's dataset (``hf download ... --local-dir``) if complete enough to read, else None."""
     if benchmark == "robotwin":
         return ROBOTWIN_ROOT
-    path = Path(DATA_ROOT) / LOCAL_DIR[benchmark]
-    return str(path) if (path / "meta" / "info.json").exists() else None
+    candidates = [Path(os.environ[ROOT_ENV[benchmark]])] if os.environ.get(ROOT_ENV[benchmark]) else []
+    candidates += [Path(DATA_ROOT) / d for d in LOCAL_DIR[benchmark]] + [ROOT / d for d in LOCAL_DIR[benchmark]]
+    return next((str(c) for c in candidates if (c / "meta" / "info.json").exists()), None)
 
 # per benchmark: dataset (read from local_root() when present), labelled camera (the frontal view), gripper action dims, grippers as objects,
 # strides (targets, inputs) for its fps

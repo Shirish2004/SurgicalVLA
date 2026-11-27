@@ -26,6 +26,10 @@ push and SFT run through a Telegram bot (or WhatsApp via CallMeBot). Setup per m
 
 Wrap any other command with `bash scripts/notify.sh --run "<label>" <command...>`.
 
+Two-way control (optional): `nohup python3 scripts/telegram_bridge.py > results/plan/telegram_bridge.log 2>&1 &`
+answers `/status`, `/gpu`, `/jobs` and `/log <name>` from your phone, and passes any other text to
+Claude Code (headless, in the project directory). It only obeys your own chat id.
+
 ## 1. Where the data lives
 
 ```

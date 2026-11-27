@@ -222,3 +222,34 @@ def test_training_reads_the_local_dataset_copy_when_present(b, tmp_path, monkeyp
     (local / "meta").mkdir(parents=True)
     (local / "meta" / "info.json").write_text("{}")
     assert f"dataset.root={local}" in _train(benchmark=b)[0]
+
+
+
+@pytest.mark.parametrize("b", ["libero", "vlabench", "libero_plus"])
+def test_sft_trains_on_every_episode_of_the_dataset(b):
+    """Full run: no episode subset in the SFT configs (the cache is built with --suite all)."""
+    import yaml
+
+    ds = yaml.safe_load((bench.ROOT / "configs" / "benchmarks" / b / "sft.yaml").read_text())["dataset"]
+    assert not ds.get("episodes") and not ds.get("episode_blocks") and ds.get("root") is None
+
+
+@pytest.mark.parametrize("b", ["libero", "vlabench", "libero_plus"])
+def test_cache_suite_all_labels_and_scores_every_episode(b, monkeypatch):
+    calls = []
+    monkeypatch.setattr(bench, "execute", lambda cmds, dry: calls.extend(cmds))
+    args = argparse.Namespace(benchmark=b, suite="all", limit=None, stride=None, input_stride=None, gpu_mem_gb=None,
+                              upload_repo=None, no_traces=False, dry_run=True, workers=1, max_gb=100.0, no_videos=True)
+    bench.cache(args, [])
+    for cmd in calls:
+        assert cmd[cmd.index("--episodes") + 1] == "0:"
+    assert "--save-videos" not in calls[0] and calls[0][calls[0].index("--max-gb") + 1] == "100.0"
+
+
+def test_episode_list_reads_open_ranges_lists_and_files(tmp_path):
+    from surgicalvla.pseudolabels.cache import episode_list
+
+    f = tmp_path / "eps.json"
+    f.write_text("[4, 2]")
+    assert episode_list("0:", 5) == [0, 1, 2, 3, 4] and episode_list("3:9", 5) == [3, 4]
+    assert episode_list("1,7", 5) == [1, 7] and episode_list(str(f), 5) == [4, 2]

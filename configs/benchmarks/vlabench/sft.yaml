@@ -31,7 +31,9 @@ run:
 # 7-D state & action (eef pos, euler, gripper; absolute pose), 3 cameras 224x224.
 # Same dataset lerobot/smolvla_vlabench was trained on.
 dataset:
-  root: null
+  root: null                          # the launcher sets it: local copy under SURGICALVLA_DATA_ROOT, else the HF cache
+  # every episode (10,977); the final model needs the feature cache for all of them:
+  #   python3 scripts/benchmark.py cache --benchmark vlabench --suite all --workers 5
   camera_map:                         # dataset key -> policy key
     observation.images.image: observation.images.camera1
     observation.images.second_image: observation.images.camera2

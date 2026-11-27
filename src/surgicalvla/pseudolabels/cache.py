@@ -66,6 +66,19 @@ def rle_decode(runs: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     return np.repeat(vals, np.asarray(runs, np.int64)).reshape(shape)
 
 
+def episode_list(spec: str, total: int) -> list[int]:
+    """Episodes from ``'a:b'`` (either end optional; ``'0:'`` = the whole dataset), a comma list,
+    or a JSON file holding a list."""
+    from pathlib import Path as _P
+
+    if spec.endswith(".json"):
+        return [int(e) for e in json.loads(_P(spec).read_text())]
+    if ":" in spec:
+        a, b = spec.split(":")
+        return list(range(int(a or 0), min(int(b or total), total)))
+    return [int(x) for x in spec.split(",") if x.strip()]
+
+
 def take_shard(episodes: list[int], shard: str | None) -> list[int]:
     """Worker ``i`` of ``n`` (``"i/n"``, 0-based) labels every n-th episode starting at i; ``None``: all.
 
@@ -460,4 +473,4 @@ def read_traces(cache: FeatureCache) -> dict[int, list[dict]]:
 
 
 __all__ = ["SCHEMA_VERSION", "CacheMismatch", "FeatureCache", "check_manifest", "config_hash", "file_sha256",
-           "hub_weights", "read_traces", "rle_decode", "rle_encode", "take_shard", "write_traces"]
+           "episode_list", "hub_weights", "read_traces", "rle_decode", "rle_encode", "take_shard", "write_traces"]

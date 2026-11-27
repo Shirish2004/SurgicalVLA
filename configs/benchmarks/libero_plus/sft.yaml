@@ -33,10 +33,9 @@ run:
 # in the same orientation as lerobot/libero. Evaluated with the LIBERO-plus protocol
 # (scripts/benchmark.py eval --benchmark libero_plus).
 dataset:
-  root: "/media/protomate/Seagate/shirish/lerobot_data/libero_plus"
-  # the labelled subset, 12 episodes per task (scripts/subset_episodes.py); remove to train on every
-  # episode once all of them are labelled
-  episodes: configs/data/libero_plus_subset_episodes.json
+  root: null                          # the launcher sets it: local copy under SURGICALVLA_DATA_ROOT, else the HF cache
+  # every episode (14,347); the final model needs the feature cache for all of them:
+  #   python3 scripts/benchmark.py cache --benchmark libero_plus --suite all --workers 5
   camera_map:                         # dataset key -> policy key
     observation.images.front: observation.images.camera1
     observation.images.wrist: observation.images.camera2

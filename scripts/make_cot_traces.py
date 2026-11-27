@@ -53,7 +53,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo-id", required=True)
     ap.add_argument("--root")
-    ap.add_argument("--episodes", required=True, help="comma list or a JSON file with a list")
+    ap.add_argument("--episodes", required=True, help="'a:b' range ('0:' = all), comma list, or a JSON file with a list")
     ap.add_argument("--sidecar", default="pseudolabels")
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--revision")
@@ -83,11 +83,10 @@ def main() -> None:
     policy, pre, _ = load_policy(args.checkpoint, args.revision, args.device)
     tok = policy.model._tokenizer()
     rename = json.loads(args.rename)
-    spec = args.episodes
-    episodes = [int(e) for e in (json.loads(Path(spec).read_text()) if spec.endswith(".json") else spec.split(","))]
-    from surgicalvla.pseudolabels.cache import take_shard
+    from surgicalvla.pseudolabels.cache import episode_list, take_shard
 
-    episodes = take_shard(episodes, args.shard)
+    meta = LeRobotDatasetMetadata(args.repo_id, root=args.root)
+    episodes = take_shard(episode_list(args.episodes, meta.total_episodes), args.shard)
     episodes = [e for e in episodes if cache.done(e)]
     have = {int(e) for sh in cache.manifest.get("cot_shards", []) for e in sh["episodes"]}
     if not args.overwrite:
@@ -95,7 +94,6 @@ def main() -> None:
     print(f"{len(episodes)} episodes to score ({len(have)} already have traces)", flush=True)
     if not episodes:
         return
-    meta = LeRobotDatasetMetadata(args.repo_id, root=args.root)
     from lerobot.datasets.factory import resolve_delta_timestamps
 
     ds = StreamingLeRobotDataset(

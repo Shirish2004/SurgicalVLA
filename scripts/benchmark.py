@@ -376,16 +376,20 @@ CACHE = {
 def cache(args, extra: list[str]) -> None:
     """Feature and label cache for one episode set (a LIBERO suite or a benchmark subset), bootstrap traces, overlay videos."""
     c = CACHE[args.benchmark]
-    if args.benchmark == "libero":
+    path = None
+    if args.suite == "all":  # every episode of the dataset
+        name, episodes = f"{args.benchmark}_all", "0:"
+    elif args.benchmark == "libero":
         path, name = suite_episodes(args.suite), args.suite
     else:
         path, name = ROOT / "configs" / "data" / f"{args.benchmark}_{args.suite}_episodes.json", f"{args.benchmark}_{args.suite}"
         if not path.exists():
             maker = "robotwin_subset_episodes.py" if args.benchmark == "robotwin" else f"subset_episodes.py --benchmark {args.benchmark}"
             sys.exit(f"{path} missing: run `python3 scripts/{maker}`")
-    episodes = str(path.relative_to(ROOT))
-    if args.limit:
-        episodes = ",".join(map(str, json.loads(path.read_text())[: args.limit]))
+    if path is not None:
+        episodes = str(path.relative_to(ROOT))
+    if args.limit:  # pilot: the first N episodes of the set
+        episodes = ",".join(map(str, json.loads(path.read_text())[: args.limit])) if path is not None else f"0:{args.limit}"
     stride = args.stride or c["stride"]
     input_stride = args.input_stride or c["input_stride"]
     root = ["--root", local_root(args.benchmark)] if local_root(args.benchmark) else []
@@ -393,7 +397,8 @@ def cache(args, extra: list[str]) -> None:
         pixi("dev", "python", "scripts/make_pseudolabels.py", "--repo-id", c["repo"], *root, "--episodes", episodes, "--camera", c["camera"],
              "--gripper-dims", *c["dims"], "--num-grippers", str(c["grippers"]), "--out", SIDECAR,
              "--stride", str(stride), "--input-stride", str(input_stride),
-             "--save-videos", f"results/pseudolabels/videos/{name}", "--report", f"results/pseudolabels/{name}_cost.json",
+             *([] if getattr(args, "no_videos", False) else ["--save-videos", f"results/pseudolabels/videos/{name}"]),
+             "--report", f"results/pseudolabels/{name}_cost.json", "--max-gb", str(getattr(args, "max_gb", 100.0)),
              "--offload-video", *(["--gpu-mem-gb", str(args.gpu_mem_gb)] if args.gpu_mem_gb else []),
              *(["--upload-repo", args.upload_repo] if args.upload_repo else []), *extra),
         pixi("dev", "python", "scripts/make_cot_traces.py", "--repo-id", c["repo"], *root, "--episodes", episodes,
@@ -481,13 +486,16 @@ def main() -> None:
 
     lb = sub.add_parser("cache", aliases=["labels"], help="feature/label cache for one LIBERO suite or benchmark subset")
     lb.add_argument("--benchmark", default="libero", choices=sorted(CACHE))
-    lb.add_argument("--suite", default="libero_spatial", help="LIBERO suite, or the subset name (RoboTwin subset10; VLABench and LIBERO-plus subset)")
+    lb.add_argument("--suite", default="libero_spatial",
+                    help="all (every episode of the dataset), a LIBERO suite, or a subset name (RoboTwin subset10; VLABench and LIBERO-plus subset)")
     lb.add_argument("--stride", type=int, help="targets every k-th frame (default: CACHE[benchmark]['stride'])")
     lb.add_argument("--limit", type=int, default=0, help="first N episodes only (0 = all)")
     lb.add_argument("--gpu-mem-gb", type=float, help="cap labelling's GPU memory, e.g. 8 when training shares the GPU")
     lb.add_argument("--input-stride", type=int, help="object inputs every k-th frame (default: CACHE[benchmark]['input_stride'])")
     lb.add_argument("--upload-repo", help="Hub dataset for finished shards (bounded local disk)")
     lb.add_argument("--no-traces", action="store_true", help="skip the bootstrap reasoning traces")
+    lb.add_argument("--max-gb", type=float, default=100.0, help="local disk cap of the cache (full VLABench is ~15 GB)")
+    lb.add_argument("--no-videos", action="store_true", help="skip the per-episode overlay videos (full datasets)")
     lb.add_argument("--workers", type=int, default=1,
                     help="parallel GPU processes on one cache, each on every N-th episode (A100 80 GB: 4-5 with --gpu-mem-gb 14)")
     lb.add_argument("--dry-run", action="store_true")

@@ -101,6 +101,7 @@ CIs). Nothing is reported before the ablation pilots finish.
 - [`docs/audit.md`](docs/audit.md): Phase-0 audit, bugs found and fixed (each with a regression test)
 - [`docs/baselines.md`](docs/baselines.md): baseline and ablation inventory, protocols, harness status, generated result tables
 - [`docs/architecture.md`](docs/architecture.md): components, switches, MoE variants with measured cost
+- [`docs/full_run.md`](docs/full_run.md): full run on one A100: data layout, parallel feature caching of every episode, push to the Hub, parallel SFT
 - [`docs/training.md`](docs/training.md): SFT, RL and SFT + RL step by step, per benchmark; when to start RL and the RL experiments; logging, resume, Hub upload
 - [`docs/evaluation.md`](docs/evaluation.md): evaluating SFT, RL and SFT + RL models on every benchmark; protocol, statistics, checklist
 - [`docs/configs.md`](docs/configs.md): every config key, what it is for and when to change it

@@ -405,6 +405,8 @@ A failed upload never stops training: it prints a warning with this retry comman
 
 ## 9. Feature cache and ablations
 
+For the full run (every episode of LIBERO, VLABench and LIBERO-plus, parallel workers, Hub push) see [`docs/full_run.md`](full_run.md).
+
 The final model (the SFT default) needs the feature cache for **every training episode**:
 object tokens are inputs, and episodes without cached data get no object tokens and no
 auxiliary targets. Build the cache for the suites you train on first.

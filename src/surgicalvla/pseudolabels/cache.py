@@ -13,6 +13,11 @@ Only derived data is stored, never frames. Rows carry the LeRobot ``episode_inde
 streamed. Shards are written atomically and recorded in the manifest with a SHA-256, so an
 interrupted run resumes after the last complete shard and a damaged shard is detected on read.
 
+Several processes may write one cache at once (``scripts/benchmark.py cache --workers N``, each
+on its own episodes): every manifest update takes an exclusive file lock (``.lock``), re-reads
+the manifest from disk and applies only its own change, so shard indices never collide and no
+writer drops another's shards.
+
 Disk use is bounded (``max_gb``): with ``upload_repo`` set, every finished shard is uploaded
 to a Hub dataset, and uploaded shards are evicted locally, least recently used first. Readers
 download evicted shards again on demand.
@@ -24,6 +29,8 @@ settings.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -57,6 +64,20 @@ def rle_decode(runs: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     vals = np.zeros(len(runs), bool)
     vals[1::2] = True
     return np.repeat(vals, np.asarray(runs, np.int64)).reshape(shape)
+
+
+def take_shard(episodes: list[int], shard: str | None) -> list[int]:
+    """Worker ``i`` of ``n`` (``"i/n"``, 0-based) labels every n-th episode starting at i; ``None``: all.
+
+    The shards are disjoint and cover every episode, so ``n`` processes can write one cache at
+    once (the cache locks its manifest; ``scripts/benchmark.py cache --workers n``).
+    """
+    if not shard:
+        return episodes
+    i, n = (int(x) for x in shard.split("/"))
+    if not 0 <= i < n:
+        raise SystemExit(f"--shard {shard}: need 0 <= i < n")
+    return episodes[i::n]
 
 
 # --------------------------------------------------------------------------- provenance
@@ -174,25 +195,47 @@ class FeatureCache:
         self._pending: list[tuple[dict, dict]] = []
         self._lru: OrderedDict[int, dict] = OrderedDict()
         self._lru_size = int(lru_shards)
-        if self.manifest_path.exists():
-            self.manifest = json.loads(self.manifest_path.read_text())
-            if self.manifest.get("schema_version") != SCHEMA_VERSION:
-                raise CacheMismatch(f"{self.manifest_path}: schema_version {self.manifest.get('schema_version')} != {SCHEMA_VERSION}")
-            if manifest is not None and manifest.get("config_hash") != self.manifest.get("config_hash"):
-                check_manifest(self.manifest, {"labeler": manifest.get("labeler", {}), "config_hash": manifest.get("config_hash")})
-        elif manifest is not None:
+        if manifest is None and not self.manifest_path.exists():
+            raise FileNotFoundError(f"no feature cache at {self.dir}")
+        if manifest is not None:
             self.dir.mkdir(parents=True, exist_ok=True)
             self.shard_dir.mkdir(exist_ok=True)
-            self.manifest = {**manifest, "schema_version": SCHEMA_VERSION, "dataset": dataset_id,
-                             "created": manifest.get("created") or time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                             "shards": [], "episodes": {}, "cot_shards": []}
-            self._save_manifest()
-        else:
-            raise FileNotFoundError(f"no feature cache at {self.dir}")
+        with self._locked(reload=False):  # two writers starting together create the manifest once
+            if self.manifest_path.exists():
+                self.manifest = json.loads(self.manifest_path.read_text())
+                if self.manifest.get("schema_version") != SCHEMA_VERSION:
+                    raise CacheMismatch(f"{self.manifest_path}: schema_version {self.manifest.get('schema_version')} != {SCHEMA_VERSION}")
+                if manifest is not None and manifest.get("config_hash") != self.manifest.get("config_hash"):
+                    check_manifest(self.manifest, {"labeler": manifest.get("labeler", {}), "config_hash": manifest.get("config_hash")})
+            else:
+                self.manifest = {**manifest, "schema_version": SCHEMA_VERSION, "dataset": dataset_id,
+                                 "created": manifest.get("created") or time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                                 "shards": [], "episodes": {}, "cot_shards": []}
+                self._save_manifest()
         if expect:
             check_manifest(self.manifest, expect)
 
     # ------------------------------------------------------------------ manifest
+    @contextlib.contextmanager
+    def _locked(self, reload: bool = True):
+        """Exclusive lock on this cache's manifest; with ``reload``, re-read it first so the caller
+        modifies the newest version (other processes may have added shards since)."""
+        try:
+            fh = open(self.dir / ".lock", "a")
+        except OSError:  # read-only copy of a finished cache (e.g. training): nobody writes it
+            if reload and self.manifest_path.exists():
+                self.manifest = json.loads(self.manifest_path.read_text())
+            yield
+            return
+        with fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                if reload and self.manifest_path.exists():
+                    self.manifest = json.loads(self.manifest_path.read_text())
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
     def _save_manifest(self) -> None:
         tmp = self.manifest_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(self.manifest, indent=1, default=str))
@@ -211,13 +254,14 @@ class FeatureCache:
         shard the manifest maps it to, and a re-added episode is mapped to its new shard. The
         manifest keeps a log of what was forgotten and why. Returns the episodes that were cached.
         """
-        gone = [int(e) for e in episodes if self.manifest["episodes"].pop(str(int(e)), None) is not None]
-        for s in self.manifest.get("cot_shards", []):
-            s["episodes"] = [e for e in s["episodes"] if int(e) not in set(gone)]
-        if gone:
-            self.manifest.setdefault("relabelled", []).append(
-                {"episodes": gone, "reason": reason, "time": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
-            self._save_manifest()
+        with self._locked():
+            gone = [int(e) for e in episodes if self.manifest["episodes"].pop(str(int(e)), None) is not None]
+            for s in self.manifest.get("cot_shards", []):
+                s["episodes"] = [e for e in s["episodes"] if int(e) not in set(gone)]
+            if gone:
+                self.manifest.setdefault("relabelled", []).append(
+                    {"episodes": gone, "reason": reason, "time": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+                self._save_manifest()
         return gone
 
     # ------------------------------------------------------------------ write
@@ -238,10 +282,18 @@ class FeatureCache:
     def flush(self) -> None:
         if not self._pending:
             return
+        with self._locked():
+            self._flush_locked()
+        shard = self.manifest["shards"][self._last_shard]
+        if self.upload_repo:
+            self._upload(shard)
+        self._enforce_cap()
+
+    def _flush_locked(self) -> None:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        idx = len(self.manifest["shards"])
+        idx = len(self.manifest["shards"])  # under the lock, after re-reading: unique among writers
         cols: dict[str, list] = {}
         for ep, fr in self._pending:
             n = len(fr["frame"])
@@ -274,9 +326,7 @@ class FeatureCache:
             self.manifest["episodes"][str(int(ep["episode"]))] = idx
         self._pending = []
         self._save_manifest()
-        if self.upload_repo:
-            self._upload(shard)
-        self._enforce_cap()
+        self._last_shard = idx
 
     def _upload(self, shard: dict) -> None:
         from huggingface_hub import HfApi
@@ -287,8 +337,9 @@ class FeatureCache:
         for fname in shard["files"]:
             api.upload_file(path_or_fileobj=str(self.shard_dir / fname), path_in_repo=f"{prefix}/shards/{fname}",
                             repo_id=self.upload_repo, repo_type="dataset")
-        shard["uploaded"] = True
-        self._save_manifest()
+        with self._locked():
+            next(s for s in self.manifest["shards"] if s["index"] == shard["index"])["uploaded"] = True
+            self._save_manifest()
         api.upload_file(path_or_fileobj=str(self.manifest_path), path_in_repo=f"{prefix}/manifest.json",
                         repo_id=self.upload_repo, repo_type="dataset")
 
@@ -299,6 +350,10 @@ class FeatureCache:
         used = self.disk_bytes()
         if used <= self.max_bytes:
             return
+        with self._locked():
+            self._evict(used)
+
+    def _evict(self, used: int) -> None:
         local = [s for s in self.manifest["shards"] if s["uploaded"] and all((self.shard_dir / f).exists() for f in s["files"])]
         local.sort(key=lambda s: max((self.shard_dir / f).stat().st_atime for f in s["files"]))
         for s in local:
@@ -377,15 +432,16 @@ def write_traces(cache: FeatureCache, rows: list[dict], tokenizer_id: str | None
 
     if not rows:
         return
-    idx = len(cache.manifest["cot_shards"])
-    path = cache.shard_dir / f"cot-{idx:05d}.parquet"
-    tmp = path.with_suffix(".parquet.tmp")
-    pq.write_table(pa.Table.from_pylist(rows), tmp, compression="zstd")
-    os.replace(tmp, path)
-    cache.manifest["cot_shards"].append({"file": path.name, "sha256": file_sha256(path),
-                                         "episodes": sorted({int(r["episode"]) for r in rows})})
-    cache.manifest["cot_tokenizer"] = tokenizer_id
-    cache._save_manifest()
+    with cache._locked():  # parallel trace writers: unique file index, no lost shard entries
+        idx = len(cache.manifest["cot_shards"])
+        path = cache.shard_dir / f"cot-{idx:05d}.parquet"
+        tmp = path.with_suffix(".parquet.tmp")
+        pq.write_table(pa.Table.from_pylist(rows), tmp, compression="zstd")
+        os.replace(tmp, path)
+        cache.manifest["cot_shards"].append({"file": path.name, "sha256": file_sha256(path),
+                                             "episodes": sorted({int(r["episode"]) for r in rows})})
+        cache.manifest["cot_tokenizer"] = tokenizer_id
+        cache._save_manifest()
 
 
 def read_traces(cache: FeatureCache) -> dict[int, list[dict]]:
@@ -404,4 +460,4 @@ def read_traces(cache: FeatureCache) -> dict[int, list[dict]]:
 
 
 __all__ = ["SCHEMA_VERSION", "CacheMismatch", "FeatureCache", "check_manifest", "config_hash", "file_sha256",
-           "hub_weights", "read_traces", "rle_decode", "rle_encode", "write_traces"]
+           "hub_weights", "read_traces", "rle_decode", "rle_encode", "take_shard", "write_traces"]

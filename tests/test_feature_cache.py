@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from surgicalvla.perception.object_inputs import ObjectInputConfig, describe, grid_masks, select_objects
-from surgicalvla.pseudolabels.cache import CacheMismatch, FeatureCache, check_manifest, read_traces, rle_decode, rle_encode
+from surgicalvla.pseudolabels.cache import CacheMismatch, FeatureCache, check_manifest, read_traces, rle_decode, rle_encode, write_traces
 from surgicalvla.pseudolabels.reader import SidecarTargets
 from tests.cache_fixtures import MANIFEST, make_cache
 
@@ -95,6 +95,7 @@ def test_eviction_keeps_disk_bounded(tmp_path):
         cache.add({"episode": 1, "length": 2}, row())
     for s in cache.manifest["shards"]:
         s["uploaded"] = True  # as if pushed to the Hub
+    cache._save_manifest()  # writers re-read the manifest under its lock, so the flag must be on disk (as _upload does)
     cache.add({"episode": 2, "length": 2}, row())
     assert not (cache.shard_dir / "frames-00000.parquet").exists() and cache.disk_bytes() <= cache.max_bytes
 
@@ -184,3 +185,41 @@ def test_episode_reader_keeps_only_the_labelled_camera_as_uint8(monkeypatch):
     assert frames.dtype == np.uint8 and frames.shape == (2, 8, 8, 3) and (frames == 255).all()
     with pytest.raises(SystemExit, match="not a camera"):
         list(iter_episodes(types.SimpleNamespace(repo_id="x", root="r", revision=None, camera="front"), [0], {0: 2}))
+
+
+def _write_episodes(args):
+    """One labelling worker: its own FeatureCache on the shared directory, one shard per episode."""
+    root, episodes = args
+    from tests.cache_fixtures import MANIFEST, episode_columns
+
+    cache = FeatureCache(root, "org/ds", "test", manifest=MANIFEST, shard_episodes=1)
+    for ep in episodes:
+        cache.add(*episode_columns(ep))
+    cache.flush()
+    write_traces(cache, [{"episode": ep, "segment": 0, "frame": 0, "trace": "t", "kept": True, "gain": 0.0, "token_ids": [1]}
+                         for ep in episodes])
+
+
+def test_parallel_writers_share_one_cache_without_losing_shards(tmp_path):
+    import multiprocessing as mp
+
+    parts = [list(range(i, 24, 4)) for i in range(4)]  # 4 workers, disjoint episodes, as `cache --workers 4`
+    with mp.get_context("spawn").Pool(4) as pool:
+        pool.map(_write_episodes, [(str(tmp_path), p) for p in parts])
+    cache = FeatureCache(tmp_path, "org/ds", "test")
+    assert cache.episodes() == list(range(24))
+    assert sorted(s["index"] for s in cache.manifest["shards"]) == list(range(24))  # no index written twice
+    assert all(cache.read(ep)["ep.episode"] == ep for ep in range(24))
+    assert sorted(read_traces(cache)) == list(range(24))
+
+
+def test_a_stale_writer_appends_after_shards_written_by_another(tmp_path):
+    from tests.cache_fixtures import episode_columns
+
+    a = FeatureCache(tmp_path, "org/ds", "test", manifest=MANIFEST)
+    b = FeatureCache(tmp_path, "org/ds", "test", manifest=MANIFEST)  # opened before a writes anything
+    a.add(*episode_columns(1)); a.flush()
+    b.add(*episode_columns(2)); b.flush()
+    cache = FeatureCache(tmp_path, "org/ds", "test")
+    assert cache.episodes() == [1, 2] and len(cache.manifest["shards"]) == 2
+    assert cache.read(1)["ep.episode"] == 1 and cache.read(2)["ep.episode"] == 2

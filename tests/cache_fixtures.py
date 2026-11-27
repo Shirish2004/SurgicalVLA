@@ -11,7 +11,8 @@ MANIFEST = {"labeler": {"stride": 2, "input_stride": 1, "causal_inputs": True, "
             "modules": {}, "config_hash": "test-hash"}
 
 
-def make_cache(tmp_path, *, n: int = 20, feat: int = 8, episode: int = 3, phrase: str = "black bowl") -> FeatureCache:
+def episode_columns(episode: int = 3, *, n: int = 20, feat: int = 8, phrase: str = "black bowl") -> tuple[dict, dict]:
+    """``(episode row, frame columns)`` of one synthetic episode, as ``FeatureCache.add`` takes them."""
     f = n // 2  # labelled frames (stride 2)
     h = w = 16
     obj_masks = np.zeros((f, h, w), bool)
@@ -30,10 +31,14 @@ def make_cache(tmp_path, *, n: int = 20, feat: int = 8, episode: int = 3, phrase
               "obj_pose": np.zeros((n, k, 8)), "obj_valid": np.ones((n, k), bool),
               "grid_feat": np.zeros((n, 4, feat)), "grid_pose": np.zeros((n, 4, 8))}
     cols = episode_rows(n, 2, 1, vis, tracks, inputs, k, feat, 32)
+    return ({"episode": episode, "length": n, "instruction": "pick up the black bowl", "phrase": phrase,
+             "phrase_confidence": 1.0, "height": h, "width": w, "obj_select_confidence": 0.9,
+             "phase_frames": [6, 14], "phase_kinds": [0, 0], "phase_confidence": [1.0, 1.0]}, cols)
+
+
+def make_cache(tmp_path, *, n: int = 20, feat: int = 8, episode: int = 3, phrase: str = "black bowl") -> FeatureCache:
     cache = FeatureCache(tmp_path, "org/ds", "test", manifest=MANIFEST)
-    cache.add({"episode": episode, "length": n, "instruction": "pick up the black bowl", "phrase": phrase,
-               "phrase_confidence": 1.0, "height": h, "width": w, "obj_select_confidence": 0.9,
-               "phase_frames": [6, 14], "phase_kinds": [0, 0], "phase_confidence": [1.0, 1.0]}, cols)
+    cache.add(*episode_columns(episode, n=n, feat=feat, phrase=phrase))
     cache.flush()
     write_traces(cache, [{"episode": episode, "segment": 1, "frame": 10, "trace": "<cot> phase: grasp </cot>",
                           "kept": True, "gain": 0.1, "token_ids": [1, 2]}])

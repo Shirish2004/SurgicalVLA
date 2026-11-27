@@ -99,7 +99,7 @@ cache() {  # a failure does not stop the next benchmark; `resume` retries it lat
 
 push() {  # whole cache tree, same layout FeatureCache uses on the Hub (<dataset-slug>/<cache-name>/...)
     hf upload-large-folder "$CACHE_REPO" pseudolabels --repo-type dataset --private \
-        --exclude "*.lock" "*.tmp" "*/.lock" --num-workers 8 && done_mark push && note "pushed to $CACHE_REPO" \
+        --exclude "*.lock" --exclude "*.tmp" --num-workers 8 && done_mark push && note "pushed to $CACHE_REPO" \
         && alert "✅ caches pushed to $CACHE_REPO"
 }
 

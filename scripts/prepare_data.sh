@@ -41,6 +41,7 @@ STATE=$LOG/state
 mkdir -p "$STATE"
 hf() { pixi run -e dev hf "$@"; }
 note() { echo "== $(date '+%F %T') $*" | tee -a "$LOG/plan.log"; }
+alert() { bash scripts/notify.sh "$*"; }  # WhatsApp (scripts/notify.sh; silent no-op until configured)
 done_mark() { touch "$STATE/$1.done"; }
 is_done() { [ -f "$STATE/$1.done" ]; }
 
@@ -79,10 +80,11 @@ cache_one() {  # cache_one <benchmark>: labels then traces, retried until it exi
         python3 scripts/benchmark.py cache --benchmark "$b" --suite all --workers "$WORKERS" \
             --gpu-mem-gb "$GPU_CAP" --no-videos >> "$LOG/cache_${b}_all.log" 2>&1 || rc=$?
         note "end cache $b (exit $rc)"
-        if [ "$rc" -eq 0 ]; then done_mark "cache_$b"; return 0; fi
+        if [ "$rc" -eq 0 ]; then done_mark "cache_$b"; alert "✅ cache $b done (labels + CoT traces)"; return 0; fi
         sleep 60  # e.g. a transient OOM or Hub hiccup; finished episodes are kept
     done
     note "cache $b still failing after $RETRIES attempts: see $LOG/cache_${b}_all.log and $LOG/${b}_all_*_w*.log"
+    alert "❌ cache $b failed $RETRIES times: see $LOG/cache_${b}_all.log"
     return 1
 }
 
@@ -97,7 +99,8 @@ cache() {  # a failure does not stop the next benchmark; `resume` retries it lat
 
 push() {  # whole cache tree, same layout FeatureCache uses on the Hub (<dataset-slug>/<cache-name>/...)
     hf upload-large-folder "$CACHE_REPO" pseudolabels --repo-type dataset --private \
-        --exclude "*.lock" "*.tmp" "*/.lock" --num-workers 8 && done_mark push && note "pushed to $CACHE_REPO"
+        --exclude "*.lock" "*.tmp" "*/.lock" --num-workers 8 && done_mark push && note "pushed to $CACHE_REPO" \
+        && alert "✅ caches pushed to $CACHE_REPO"
 }
 
 status() {  # what is cached, per benchmark, against the dataset's episode count

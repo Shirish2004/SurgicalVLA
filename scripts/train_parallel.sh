@@ -48,9 +48,10 @@ run_one() {  # run_one <benchmark> <first core> <last core>: train, restarting f
             >> "$LOG/train_$b.log" 2>&1
         code=$?
         echo "== $(date '+%F %T') end sft $b (exit $code)" | tee -a "$LOG/plan.log"
-        [ $code -eq 0 ] && return 0
+        [ $code -eq 0 ] && { bash scripts/notify.sh "✅ SFT $b finished"; return 0; }
         sleep 60
     done
+    bash scripts/notify.sh "❌ SFT $b failed $RETRIES times (exit $code): see $LOG/train_$b.log"
     return $code
 }
 

@@ -17,6 +17,12 @@ nvidia-smi && nproc                    # A100 80 GB, 12 CPUs
 Accept the SAM 3 licence at <https://huggingface.co/facebook/sam3> with the same account,
 because the weights are gated.
 
+WhatsApp alerts (optional): `scripts/notify.sh` reports each finished or failed cache stage,
+Hub push and SFT run through CallMeBot. Put `CALLMEBOT_PHONE=+<number>` and
+`CALLMEBOT_APIKEY=<key>` in `~/.config/notify-whatsapp/env` (chmod 600) on each machine and test
+with `bash scripts/notify.sh test`. Wrap any other command with
+`bash scripts/notify.sh --run "<label>" <command...>`.
+
 ## 1. Where the data lives
 
 ```

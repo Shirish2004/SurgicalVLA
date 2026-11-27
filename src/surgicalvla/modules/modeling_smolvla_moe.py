@@ -677,8 +677,8 @@ class SmolVLAMoEModel(nn.Module):
             out.update(self.aux_heads.losses(src.to(next(self.aux_heads.parameters()).dtype), aux))
         if self.latent is not None and future_latent is not None and prefix.latent_out is not None:
             out["latent_cot_loss"] = LatentReasoner.loss(self.latent.predict(prefix.latent_out), future_latent)
-        if self.training:
-            self.train_steps += 1
+        # train_steps counts optimiser steps (SmolVLAMoEPolicy.on_optimizer_step), not forward
+        # passes: gradient accumulation and diagnostic forwards must not advance the curriculum.
 
         total = out["fm_loss"].new_zeros(())
         for name, weight in self.loss_weights().items():
@@ -1142,6 +1142,13 @@ class SmolVLAMoEPolicy(SmolVLAPolicy):
 
     def update_ema(self) -> None:
         """Call after each optimiser step: advances the latent-CoT EMA target encoder."""
+        if self.model.latent_target is not None:
+            self.model.latent_target.update()
+
+    def on_optimizer_step(self) -> None:
+        """Call once after each optimiser step: advances the step counter that drives the
+        explicit -> latent CoT curriculum, and the latent-CoT EMA target encoder."""
+        self.model.train_steps += 1
         if self.model.latent_target is not None:
             self.model.latent_target.update()
 

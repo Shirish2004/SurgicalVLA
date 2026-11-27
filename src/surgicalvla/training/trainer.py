@@ -60,6 +60,20 @@ def collapse_obs_history(batch: dict) -> dict:
     return batch
 
 
+def average_micro_metrics(micro: list[dict]) -> dict:
+    """Mean of each metric over the micro-batches that reported it.
+
+    A term can be missing from some micro-batches (the CoT terms on a latent-only curriculum
+    step); dividing by the number of micro-batches would log it at a fraction of its value.
+    """
+    sums, counts = {}, {}
+    for d in micro:
+        for k, v in d.items():
+            sums[k] = sums.get(k, 0.0) + float(v)
+            counts[k] = counts.get(k, 0) + 1
+    return {k: sums[k] / counts[k] for k in sums}
+
+
 def router_stats(usage: dict) -> dict:
     """Per-layer routing entropy (normalised to [0, 1]) and the max/min expert load ratio."""
     import math
@@ -354,7 +368,7 @@ class Trainer:
             self.optimizer.zero_grad(set_to_none=True)
             # Average the reported metrics over the micro-batches: logging only the
             # last one makes the logged loss noisier than the loss being optimised.
-            micro: dict[str, float] = {}
+            micro: list[dict] = []
             for _ in range(self.grad_accum):
                 t = time.perf_counter()
                 raw = next(data_iter)
@@ -367,14 +381,15 @@ class Trainer:
                 with self._amp():
                     loss, loss_dict = self.policy.forward(batch)
                 (loss / self.grad_accum).backward()
-                for k, v in loss_dict.items():
-                    micro[k] = micro.get(k, 0.0) + float(v) / self.grad_accum
-            loss_dict = micro
+                micro.append({k: float(v) for k, v in loss_dict.items()})
+            loss_dict = average_micro_metrics(micro)
             grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.get_optim_params(), clip)
             window["clipped"] += int(float(grad_norm) > clip)
             self.optimizer.step()
             self.scheduler.step()
-            if hasattr(self.policy, "update_ema"):
+            if hasattr(self.policy, "on_optimizer_step"):
+                self.policy.on_optimizer_step()
+            elif hasattr(self.policy, "update_ema"):
                 self.policy.update_ema()
             if self.ema is not None:
                 self.ema.update()

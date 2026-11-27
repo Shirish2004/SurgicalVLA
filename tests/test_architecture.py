@@ -142,3 +142,11 @@ def test_cot_candidates_and_phase_names(tmp_path):
     assert motion_word(np.array([0.01, 0.0])) == "right" and motion_word(np.zeros(2)) == "still"
     c = candidates(d, 8)
     assert c[1] == "<cot> phase: grasp | object: black bowl | motion: right </cot>"
+
+
+def test_micro_metrics_average_only_over_reporting_micro_batches():
+    from surgicalvla.training.trainer import average_micro_metrics
+
+    # second micro-batch is a latent-only curriculum step: no CoT terms
+    out = average_micro_metrics([{"fm_loss": 1.0, "cot_token_acc": 0.96}, {"fm_loss": 3.0}])
+    assert out == {"fm_loss": 2.0, "cot_token_acc": 0.96}

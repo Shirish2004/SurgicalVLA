@@ -780,3 +780,17 @@ def test_cot_cache_is_not_reused_for_another_batch():
         obj1 = model.object_features(batch["state"][:1], batch["obj_sam_feat"][:1], batch["obj_pose_vec"][:1], batch["obj_valid_mask"][:1])
         model.sample_actions(*one, objects=obj1, refresh_cot=False)  # no refresh requested
     assert model._cot_cache[0].shape[0] == 1
+
+
+def test_curriculum_counter_counts_optimizer_steps_not_forwards():
+    """Forward passes (grad accumulation, diagnostics) must not advance the CoT curriculum."""
+    cfg = make_config()
+    model = make_model(cfg).train()
+    inputs = to_model_inputs(model, make_batch(cfg))
+    for _ in range(3):
+        model(**inputs)
+    assert int(model.train_steps) == 0
+    policy = SimpleNamespace(model=model)
+    SmolVLAMoEPolicy.on_optimizer_step(policy)
+    SmolVLAMoEPolicy.on_optimizer_step(policy)
+    assert int(model.train_steps) == 2

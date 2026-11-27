@@ -25,6 +25,7 @@ run:
   streaming_buffer_size: 1000        # shuffle-buffer size, in frames, when streaming
   streaming_seed: 42                 # seed for the streaming shuffle buffer
   grad_accum: 4                      # accumulate gradients over N steps before optimizer step
+  num_workers: 4                     # data-loader processes (video decoding); 12-CPU A100 box: 10 alone, 3 per run when 3 share it
   
 
 # lerobot/libero_plus: 14,347 episodes / 40 LIBERO tasks recorded under LIBERO-plus perturbations

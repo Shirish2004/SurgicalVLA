@@ -300,6 +300,7 @@ def main():
         eval_every=proj_cfg.get("val_every", 2_000),
         save_every=proj_cfg.get("save_every", 2_000),
         device=run_cfg.get("device", "cuda"),
+        num_workers=int(run_cfg.get("num_workers", 2)),
         visual_every=log_cfg.get("log_every_n_steps"),
         visual_logging=log_cfg.get("enable_visual_logging", True),
         logger_kwargs=logger_kwargs,

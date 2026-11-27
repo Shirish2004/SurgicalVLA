@@ -61,3 +61,19 @@ def test_val_fraction_is_of_the_episode_pool():
     assert len(val) == 4 and len(train) == 428 and set(train) | set(val) == set(range(432))
     train, val = split_episodes(1693, 0.5, pool=[7, 8])
     assert len(train) == 1 and len(val) == 1
+
+
+def test_train_loader_keeps_workers_and_follows_the_sampler():
+    import torch
+    from torch.utils.data import TensorDataset
+
+    from surgicalvla.training.trainer import ResumableRandomSampler, make_train_loader
+
+    ds = TensorDataset(torch.arange(12))
+    loader = make_train_loader(ds, 4, ResumableRandomSampler(len(ds), 0), num_workers=2)
+    assert loader.num_workers == 2 and loader.persistent_workers and loader.prefetch_factor == 4
+    serial = make_train_loader(ds, 4, ResumableRandomSampler(len(ds), 0), num_workers=0)  # 0 workers must not raise
+    from itertools import islice
+
+    first = lambda dl: [b[0].tolist() for b in islice(dl, 5)]  # noqa: E731  (the sampler is endless)
+    assert first(loader) == first(serial)

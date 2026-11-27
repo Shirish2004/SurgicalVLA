@@ -90,6 +90,17 @@ def set_rng_state(state: dict) -> None:
         torch.cuda.set_rng_state_all(state["cuda"])
 
 
+def make_train_loader(dataset, batch_size: int, sampler, num_workers: int, prefetch: int = 4) -> DataLoader:
+    """Training loader: each worker keeps ``prefetch`` batches ready, and workers survive the end of
+    an iterator (streaming data); the shuffle order still comes from ``sampler`` in the main
+    process, so resuming is unaffected. ``run.num_workers`` sets the
+    count (A100 + 12 CPUs: ~10 for one run, ~3 each for three runs sharing the machine)."""
+    return DataLoader(
+        dataset, batch_size=batch_size, sampler=sampler, num_workers=num_workers, pin_memory=True, drop_last=True,
+        prefetch_factor=prefetch if num_workers else None, persistent_workers=num_workers > 0,
+    )
+
+
 class Trainer:
     def __init__(
         self,
@@ -156,10 +167,7 @@ class Trainer:
         # Map-style data is shuffled by a sampler whose order is a function of (seed, position),
         # so resuming skips to the saved position without loading the skipped samples.
         self.sampler = None if isinstance(dataset, IterableDataset) else ResumableRandomSampler(len(dataset), seed)
-        self.loader = DataLoader(
-            dataset, batch_size=batch_size, sampler=self.sampler, num_workers=num_workers,
-            pin_memory=True, drop_last=True, prefetch_factor=2, persistent_workers=False,
-        )
+        self.loader = make_train_loader(dataset, batch_size, self.sampler, num_workers)
         self.val_loader = None
         if val_dataset is not None:
             self.val_loader = DataLoader(
@@ -168,7 +176,7 @@ class Trainer:
                 shuffle=False,
                 num_workers=min(num_workers, 2),
                 pin_memory=True,
-                prefetch_factor=2,
+                prefetch_factor=2 if num_workers else None,
                 persistent_workers=False,
             )
         self.optimizer = policy.config.get_optimizer_preset().build(policy.get_optim_params())

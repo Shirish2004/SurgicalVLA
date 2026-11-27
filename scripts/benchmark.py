@@ -15,8 +15,12 @@ Every benchmark has its own model, configs and outputs:
     python3 scripts/benchmark.py pipeline [--benchmarks libero robotwin vlabench] [--libero-plus]
     # ablation arms (configs/ablations/arms.yaml): shared protocol, 3 seeds, then evaluation
     python3 scripts/benchmark.py ablate --suite libero_spatial [--arms smolvla vision ...]
-    # feature/label cache, reasoning traces, overlay videos
-    python3 scripts/benchmark.py cache --suite libero_spatial
+    # feature/label cache, reasoning traces, overlay videos (--workers N: N GPU processes on one cache)
+    python3 scripts/benchmark.py cache --suite libero_spatial [--workers 4]
+
+Data locations (environment): SURGICALVLA_DATA_ROOT holds local copies of the LeRobot datasets
+(<root>/libero, <root>/vlabench_unified, <root>/libero_plus; each used when its meta/info.json
+exists, otherwise the dataset is read through the Hugging Face cache); ROBOTWIN_ROOT the RoboTwin copy.
 
 ``--dry-run`` prints the commands; arguments after ``--`` go to the trainer / lerobot-eval.
 
@@ -37,6 +41,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -89,6 +94,24 @@ def execute(cmds: list[list[str]], dry_run: bool) -> None:
             code = subprocess.call(cmd, cwd=ROOT)
             if code:
                 sys.exit(code)
+
+
+def execute_parallel(cmds: list[list[str]], dry_run: bool, logs: list[Path], threads: int) -> None:
+    """Run ``cmds`` at once, each logging to its file with ``threads`` CPU threads; exit if any fails."""
+    env = {**os.environ, "OMP_NUM_THREADS": str(threads), "MKL_NUM_THREADS": str(threads)}
+    for cmd, log in zip(cmds, logs, strict=True):
+        print("$", shlex.join(cmd), ">", log, "&", flush=True)
+    if dry_run:
+        return
+    procs = []
+    for cmd, log in zip(cmds, logs, strict=True):
+        log.parent.mkdir(parents=True, exist_ok=True)
+        procs.append((subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=open(log, "a"), stderr=subprocess.STDOUT), log))
+    failed = [(log, code) for proc, log in procs if (code := proc.wait())]
+    for log, code in failed:
+        print(f"# worker failed (exit {code}): see {log}", file=sys.stderr, flush=True)
+    if failed:
+        sys.exit(failed[0][1])
 
 
 def resolve_policy(ref: str) -> str:
@@ -160,7 +183,7 @@ def train_cmds(args, extra: list[str]) -> list[list[str]]:
                        "--policy.scheduler_decay_steps=25000", "--batch_size=32", "--steps=25000"],
             "vlabench": ["--batch_size=32", "--steps=20000"],
         }
-        recipe["libero_plus"] = recipe["libero"] + [f"--dataset.root={CACHE['libero_plus']['root']}"]
+        recipe["libero_plus"] = recipe["libero"] + ([f"--dataset.root={local_root('libero_plus')}"] if local_root("libero_plus") else [])
         recipe = recipe[b]
         return [
             pixi(
@@ -176,8 +199,10 @@ def train_cmds(args, extra: list[str]) -> list[list[str]]:
         ]
 
     cmd = ["python", "scripts/train.py", "--config", args.config or f"configs/benchmarks/{b}/sft.yaml", "--repo_id", DATASET[b]]
-    if b == "robotwin":  # local copy of robotwin_unified (root set in the config)
-        cmd += ["--root", "/media/protomate/Seagate/shirish/robotwin_data"]
+    if b == "robotwin":  # local copy of robotwin_unified
+        cmd += ["--root", ROBOTWIN_ROOT, f"dataset.root={ROBOTWIN_ROOT}"]
+    else:  # the local copy under SURGICALVLA_DATA_ROOT when there is one, else the Hugging Face cache
+        cmd.append(f"dataset.root={local_root(b) or 'null'}")
     if getattr(args, "resume", False):  # newest checkpoints/step_N under the output directory
         cmd += ["--resume", "latest"]
     if args.out:
@@ -314,23 +339,34 @@ def ablate(args, extra: list[str]) -> None:
         sys.exit(1)
 
 
-ROBOTWIN_ROOT = "/media/protomate/Seagate/shirish/robotwin_data"
-DATA_ROOT = "/media/protomate/Seagate/shirish/lerobot_data"  # local copies of lerobot/vlabench_unified and lerobot/libero_plus
-# per benchmark: dataset, local root, labelled camera (the frontal view), gripper action dims, grippers as objects,
+ROBOTWIN_ROOT = os.environ.get("ROBOTWIN_ROOT", "/media/protomate/Seagate/shirish/robotwin_data")
+# local copies of the LeRobot datasets: <DATA_ROOT>/libero, <DATA_ROOT>/vlabench_unified, <DATA_ROOT>/libero_plus
+DATA_ROOT = os.environ.get("SURGICALVLA_DATA_ROOT", "/media/protomate/Seagate/shirish/lerobot_data")
+LOCAL_DIR = {"libero": "libero", "vlabench": "vlabench_unified", "libero_plus": "libero_plus"}
+
+
+def local_root(benchmark: str) -> str | None:
+    """Local copy of the benchmark's dataset (``hf download ... --local-dir``) if complete enough to read, else None."""
+    if benchmark == "robotwin":
+        return ROBOTWIN_ROOT
+    path = Path(DATA_ROOT) / LOCAL_DIR[benchmark]
+    return str(path) if (path / "meta" / "info.json").exists() else None
+
+# per benchmark: dataset (read from local_root() when present), labelled camera (the frontal view), gripper action dims, grippers as objects,
 # strides (targets, inputs) for its fps
 CACHE = {
-    "libero": dict(repo="lerobot/libero", root=None, camera="observation.images.image", dims=["6"], grippers=1, stride=4, input_stride=1,
+    "libero": dict(repo="lerobot/libero", camera="observation.images.image", dims=["6"], grippers=1, stride=4, input_stride=1,
                    ckpt=("lerobot/smolvla_libero", "a24f1f380461b665158d52acd140152c79e8b36d"),
                    rename={"observation.images.image": "observation.images.camera1", "observation.images.image2": "observation.images.camera2"}),
-    "robotwin": dict(repo="lerobot/robotwin_unified", root=ROBOTWIN_ROOT, camera="observation.images.cam_high", dims=["6", "13"], grippers=2, stride=12, input_stride=3,
+    "robotwin": dict(repo="lerobot/robotwin_unified", camera="observation.images.cam_high", dims=["6", "13"], grippers=2, stride=12, input_stride=3,
                      ckpt=("lerobot/smolvla_robotwin", "eb55d3a74f6cd26c6388aecd116b37b63fac144d"),
                      rename={"observation.images.cam_high": "observation.images.camera1",
                              "observation.images.cam_left_wrist": "observation.images.camera2",
                              "observation.images.cam_right_wrist": "observation.images.camera3"}),
-    "vlabench": dict(repo="lerobot/vlabench_unified", root=f"{DATA_ROOT}/vlabench_unified", camera="observation.images.image", dims=["6"],
+    "vlabench": dict(repo="lerobot/vlabench_unified", camera="observation.images.image", dims=["6"],
                      grippers=1, stride=4, input_stride=1, ckpt=("lerobot/smolvla_vlabench", "7ef370813eb35823caa94088b50f5389a51e4c47"),
                      rename=RENAME["vlabench"]),
-    "libero_plus": dict(repo="lerobot/libero_plus", root=f"{DATA_ROOT}/libero_plus", camera="observation.images.front", dims=["6"],
+    "libero_plus": dict(repo="lerobot/libero_plus", camera="observation.images.front", dims=["6"],
                         grippers=1, stride=8, input_stride=2,  # 20 fps: the same target and input rates as LIBERO at 10 fps
                         ckpt=("lerobot/smolvla_libero", "a24f1f380461b665158d52acd140152c79e8b36d"),
                         rename={"observation.images.front": "observation.images.camera1", "observation.images.wrist": "observation.images.camera2"}),
@@ -352,7 +388,7 @@ def cache(args, extra: list[str]) -> None:
         episodes = ",".join(map(str, json.loads(path.read_text())[: args.limit]))
     stride = args.stride or c["stride"]
     input_stride = args.input_stride or c["input_stride"]
-    root = ["--root", c["root"]] if c["root"] else []
+    root = ["--root", local_root(args.benchmark)] if local_root(args.benchmark) else []
     cmds = [
         pixi("dev", "python", "scripts/make_pseudolabels.py", "--repo-id", c["repo"], *root, "--episodes", episodes, "--camera", c["camera"],
              "--gripper-dims", *c["dims"], "--num-grippers", str(c["grippers"]), "--out", SIDECAR,
@@ -364,7 +400,18 @@ def cache(args, extra: list[str]) -> None:
              "--sidecar", SIDECAR, "--checkpoint", c["ckpt"][0], "--revision", c["ckpt"][1], "--bootstrap",
              "--rename", json.dumps(c["rename"])),  # dataset camera -> policy camera
     ]
-    execute(cmds if not args.no_traces else cmds[:1], args.dry_run)
+    cmds = cmds if not args.no_traces else cmds[:1]
+    workers = getattr(args, "workers", 1) or 1
+    if workers == 1:
+        execute(cmds, args.dry_run)
+        return
+    # N processes per stage, each on every N-th episode, all writing the same cache (it locks its
+    # manifest); traces start once every labelling worker has finished
+    threads = max(1, (os.cpu_count() or workers) // workers)
+    for stage, cmd in zip(("labels", "traces"), cmds):
+        shards = [[*cmd, "--shard", f"{i}/{workers}"] for i in range(workers)]
+        logs = [ROOT / "results" / "plan" / f"{name}_{stage}_w{i}.log" for i in range(workers)]
+        execute_parallel(shards, args.dry_run, logs, threads)
 
 
 # ----------------------------------------------------------------------------- pipeline
@@ -441,6 +488,8 @@ def main() -> None:
     lb.add_argument("--input-stride", type=int, help="object inputs every k-th frame (default: CACHE[benchmark]['input_stride'])")
     lb.add_argument("--upload-repo", help="Hub dataset for finished shards (bounded local disk)")
     lb.add_argument("--no-traces", action="store_true", help="skip the bootstrap reasoning traces")
+    lb.add_argument("--workers", type=int, default=1,
+                    help="parallel GPU processes on one cache, each on every N-th episode (A100 80 GB: 4-5 with --gpu-mem-gb 14)")
     lb.add_argument("--dry-run", action="store_true")
 
     args = ap.parse_args(argv)

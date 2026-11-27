@@ -202,6 +202,7 @@ def main() -> None:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--offload-video", action="store_true", help="keep video frames in host memory (lower VRAM)")
     ap.add_argument("--gpu-mem-gb", type=float, help="cap this process's GPU memory (e.g. when sharing the GPU with training)")
+    ap.add_argument("--shard", help="'i/n': label only worker i's share of --episodes (parallel workers on one cache)")
     args = ap.parse_args()
 
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
@@ -214,6 +215,9 @@ def main() -> None:
     meta = LeRobotDatasetMetadata(args.repo_id, root=args.root, revision=args.revision)
     spec = args.episodes
     episodes = [int(e) for e in json.loads(Path(spec).read_text())] if spec.endswith(".json") else parse_episodes(spec, meta.total_episodes)
+    from surgicalvla.pseudolabels.cache import take_shard
+
+    episodes = take_shard(episodes, args.shard)
     vision_cfg, input_cfg = VisionConfig(offload_video=args.offload_video), ObjectInputConfig(num_grippers=args.num_grippers)
     manifest = provenance(args, vision_cfg, input_cfg, None if args.no_tracks else str(DEFAULT_CKPT))
     cache = FeatureCache(args.out, args.repo_id, args.name or f"v3-{manifest['config_hash'][:12]}", manifest=manifest,

@@ -62,6 +62,7 @@ def main() -> None:
     ap.add_argument("--overwrite", action="store_true", help="re-score episodes that already have traces")
     ap.add_argument("--bootstrap", action="store_true", help="round 1: keep the full trace for every segment, unfiltered")
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--shard", help="'i/n': score only worker i's share of --episodes (parallel workers on one cache)")
     args = ap.parse_args()
 
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
@@ -84,6 +85,9 @@ def main() -> None:
     rename = json.loads(args.rename)
     spec = args.episodes
     episodes = [int(e) for e in (json.loads(Path(spec).read_text()) if spec.endswith(".json") else spec.split(","))]
+    from surgicalvla.pseudolabels.cache import take_shard
+
+    episodes = take_shard(episodes, args.shard)
     episodes = [e for e in episodes if cache.done(e)]
     have = {int(e) for sh in cache.manifest.get("cot_shards", []) for e in sh["episodes"]}
     if not args.overwrite:

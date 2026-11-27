@@ -189,3 +189,36 @@ def test_subset_takes_a_fixed_number_per_task_and_is_seeded():
     assert chosen == subset(tasks, 2, 0) and chosen == sorted(chosen)
     per = {t: sum(tasks[e] == t for e in chosen) for t in "abc"}
     assert per == {"a": 2, "b": 2, "c": 1}  # all of a task with fewer episodes
+
+
+def test_take_shard_splits_episodes_into_disjoint_covering_parts():
+    from surgicalvla.pseudolabels.cache import take_shard
+
+    eps = list(range(10, 33))
+    parts = [take_shard(eps, f"{i}/4") for i in range(4)]
+    assert sorted(e for p in parts for e in p) == eps and take_shard(eps, None) == eps
+    with pytest.raises(SystemExit):
+        take_shard(eps, "4/4")
+
+
+def test_cache_workers_run_labels_then_traces_in_parallel_shards(monkeypatch):
+    stages = []
+    monkeypatch.setattr(bench, "execute_parallel", lambda cmds, dry, logs, threads: stages.append((cmds, logs, threads)))
+    monkeypatch.setattr(bench.os, "cpu_count", lambda: 12)
+    args = argparse.Namespace(benchmark="libero", suite="libero_spatial", limit=None, stride=None, input_stride=None,
+                              gpu_mem_gb=14, upload_repo=None, no_traces=False, dry_run=True, workers=3)
+    bench.cache(args, [])
+    assert [s[0][0][s[0][0].index("python") + 1] for s in stages] == ["scripts/make_pseudolabels.py", "scripts/make_cot_traces.py"]
+    for cmds, logs, threads in stages:
+        assert [c[c.index("--shard") + 1] for c in cmds] == ["0/3", "1/3", "2/3"]
+        assert len(set(logs)) == 3 and threads == 4
+
+
+@pytest.mark.parametrize("b", ["libero", "libero_plus", "vlabench"])
+def test_training_reads_the_local_dataset_copy_when_present(b, tmp_path, monkeypatch):
+    monkeypatch.setattr(bench, "DATA_ROOT", str(tmp_path))
+    assert f"dataset.root=null" in _train(benchmark=b)[0]  # no local copy: Hugging Face cache
+    local = tmp_path / bench.LOCAL_DIR[b]
+    (local / "meta").mkdir(parents=True)
+    (local / "meta" / "info.json").write_text("{}")
+    assert f"dataset.root={local}" in _train(benchmark=b)[0]

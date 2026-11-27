@@ -17,11 +17,14 @@ nvidia-smi && nproc                    # A100 80 GB, 12 CPUs
 Accept the SAM 3 licence at <https://huggingface.co/facebook/sam3> with the same account,
 because the weights are gated.
 
-WhatsApp alerts (optional): `scripts/notify.sh` reports each finished or failed cache stage,
-Hub push and SFT run through CallMeBot. Put `CALLMEBOT_PHONE=+<number>` and
-`CALLMEBOT_APIKEY=<key>` in `~/.config/notify-whatsapp/env` (chmod 600) on each machine and test
-with `bash scripts/notify.sh test`. Wrap any other command with
-`bash scripts/notify.sh --run "<label>" <command...>`.
+Phone alerts (optional): `scripts/notify.sh` reports each finished or failed cache stage, Hub
+push and SFT run through a Telegram bot (or WhatsApp via CallMeBot). Setup per machine:
+1. In Telegram, message `@BotFather`, send `/newbot` and copy the token.
+2. Run `mkdir -p ~/.config/surgicalvla-notify && echo 'TELEGRAM_BOT_TOKEN=<token>' >> ~/.config/surgicalvla-notify/env && chmod 600 ~/.config/surgicalvla-notify/env`.
+3. Open your bot in Telegram and press Start.
+4. Run `bash scripts/notify.sh --setup-telegram`, which saves your chat id and sends a test message.
+
+Wrap any other command with `bash scripts/notify.sh --run "<label>" <command...>`.
 
 ## 1. Where the data lives
 

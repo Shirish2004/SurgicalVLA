@@ -421,6 +421,7 @@ def cache(args, extra: list[str]) -> None:
              "--stride", str(stride), "--input-stride", str(input_stride),
              *([] if getattr(args, "no_videos", False) else ["--save-videos", f"results/pseudolabels/videos/{name}"]),
              "--report", f"results/pseudolabels/{name}_cost.json", "--max-gb", str(getattr(args, "max_gb", 100.0)),
+             "--shard-episodes", "2",  # write every 2 episodes: little is lost on a crash, and progress is visible
              "--offload-video", *(["--gpu-mem-gb", str(args.gpu_mem_gb)] if args.gpu_mem_gb else []),
              *(["--upload-repo", args.upload_repo] if args.upload_repo else []), *extra),
         pixi("dev", "python", "scripts/make_cot_traces.py", "--repo-id", c["repo"], *root, "--episodes", episodes,

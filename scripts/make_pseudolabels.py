@@ -196,6 +196,8 @@ def main() -> None:
                                       "their traces are re-scored too")
     ap.add_argument("--relabel-reason", help="why, recorded in the manifest's relabel log")
     ap.add_argument("--max-gb", type=float, default=20.0)
+    ap.add_argument("--shard-episodes", type=int, default=8,
+                    help="episodes per written shard: the most a hard-killed worker can lose (2 for long parallel runs)")
     ap.add_argument("--upload-repo", help="Hub dataset for finished shards, e.g. Shirish24/surgical-vla-cache")
     ap.add_argument("--report", help="write timing / disk cost per episode and per 1,000 episodes as JSON")
     ap.add_argument("--save-videos", help="directory for per-episode overlay videos of the tracked target")
@@ -221,7 +223,7 @@ def main() -> None:
     vision_cfg, input_cfg = VisionConfig(offload_video=args.offload_video), ObjectInputConfig(num_grippers=args.num_grippers)
     manifest = provenance(args, vision_cfg, input_cfg, None if args.no_tracks else str(DEFAULT_CKPT))
     cache = FeatureCache(args.out, args.repo_id, args.name or f"v3-{manifest['config_hash'][:12]}", manifest=manifest,
-                         max_gb=args.max_gb, upload_repo=args.upload_repo)
+                         max_gb=args.max_gb, upload_repo=args.upload_repo, shard_episodes=args.shard_episodes)
     if args.relabel:
         spec = args.relabel
         again = [int(e) for e in json.loads(Path(spec).read_text())] if spec.endswith(".json") else parse_episodes(spec, meta.total_episodes)

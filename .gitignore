@@ -68,3 +68,5 @@ credentials*.json
 # Personal phone alerts / Telegram bridge (local only)
 scripts/notify.sh
 scripts/telegram_bridge.py
+# outputs/ may be a symlink to external storage
+/outputs

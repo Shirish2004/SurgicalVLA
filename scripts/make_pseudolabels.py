@@ -251,6 +251,13 @@ def main() -> None:
     torch.cuda.reset_peak_memory_stats()
     k, c, p = input_cfg.num_candidates + input_cfg.num_grippers, inputs_x.feat_dim, 32
 
+    import signal
+
+    def _interrupt(sig, _frame):  # kill / hang-up: leave through `finally`, which saves finished work
+        raise KeyboardInterrupt(f"signal {sig}")
+
+    for _sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(_sig, _interrupt)
     rows = []
     t_read = time.time()
     lengths = {e: int(meta.episodes[e]["length"]) for e in todo}

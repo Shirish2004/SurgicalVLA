@@ -76,8 +76,16 @@ tail -f results/plan/libero_all_labels_w0.log     # one JSON line per labelled e
   - targets: SAM 3 video masks, DINOv2 target feature, relative depth and motion, TAPNext++
     point tracks, phase boundaries, noun phrase;
   - the CoT traces.
-- **Resumable:** stop with `kill` and re-run the same command. Finished episodes and scored
-  traces are skipped.
+- **Resumable** after a crash, kill, reboot or dropped SSH session. Run
+  `nohup bash scripts/prepare_data.sh resume > results/plan/prepare.log 2>&1 &` and it continues
+  where it stopped:
+  - finished steps are skipped (`results/plan/state/*.done`);
+  - finished episodes are skipped;
+  - a killed worker first writes its pending episodes;
+  - traces are saved every 20 episodes;
+  - a failing benchmark is retried 3 times (`RETRIES`).
+
+  `bash scripts/prepare_data.sh status` shows labelled and traced episodes per benchmark.
 - **Tuning:** `nvidia-smi` shows 5 processes at about 60–70 GiB. If GPU utilisation stays below
   ~80 %, try `WORKERS=6 GPU_CAP=12`. If you see out-of-memory errors, use `WORKERS=4`.
 - **Disk:** about 20 GB of cache in total (`--max-gb` is 100 per cache). Overlay videos are off
@@ -105,8 +113,19 @@ with other settings.
 ```bash
 bash scripts/train_parallel.sh -- run.steps=50 project.val_every=25 hub.push=false   # smoke test, all three
 nohup bash scripts/train_parallel.sh > results/plan/train.log 2>&1 &                 # the real runs (50k steps each)
-bash scripts/train_parallel.sh --resume                                              # after a stop
+bash scripts/train_parallel.sh                                                       # after any stop: same command
 ```
+
+Resuming is always on:
+- each run continues from its newest complete checkpoint (weights, optimizer, schedule, EMA,
+  RNG, data position, W&B run);
+- finished runs are skipped;
+- a crashed run restarts from its checkpoint up to 3 times (`RETRIES`);
+- checkpoints are written atomically every 1,000 steps (`SAVE_EVERY`), and only the newest 2
+  are kept (`KEEP_LAST`; each is about 12 GB).
+
+Re-run with the same trainer overrides as the first run. If a run was stopped after its final
+checkpoint but before the Hub upload, push it with `scripts/push_to_hub.py` (`docs/training.md` §8).
 
 - **Sharing the machine:**
   - the three runs share the GPU at about 11 GiB each, which leaves room;

@@ -105,29 +105,58 @@ def main() -> None:
         d = view(ep)
         bounds = [0, *[int(f) for f in d["phase_frames"]], int(meta.episodes[ep]["length"])]
         wanted[ep] = {(a + b) // 2: i for i, (a, b) in enumerate(zip(bounds[:-1], bounds[1:], strict=True)) if b > a}
+    import signal
+
+    def _interrupt(sig, _frame):  # kill / hang-up: leave through `finally`, which saves finished work
+        raise KeyboardInterrupt(f"signal {sig}")
+
+    for _sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(_sig, _interrupt)
     results: dict[int, list] = {ep: [] for ep in episodes}
-    for item in ds:
-        ep, fi = int(item["episode_index"]), int(item["frame_index"])
-        if fi not in wanted.get(ep, {}):
-            continue
-        raw = {rename.get(k, k): (v[None] if torch.is_tensor(v) else [v]) for k, v in item.items()}
-        batch = pre(raw)
-        d = view(ep)
-        traces = candidates(d, fi)
-        gains = score(policy, batch, traces, tok, policy.config.cot_max_tokens)
-        best = 1 if args.bootstrap else int(np.argmax(gains))
-        keep = args.bootstrap or gains[best] > 0
-        results[ep].append({"segment": wanted[ep][fi], "frame": fi, "trace": traces[best] if keep else None,
-                            "gain": float(gains[best]), "all_gains": dict(zip(traces, map(float, gains), strict=True))})
-        print(json.dumps({"episode": ep, **results[ep][-1]}), flush=True)
+    finished: list[int] = []  # scored completely, not yet written
+
+    def save(eps: list[int]) -> None:  # every few episodes, so an interrupted worker keeps its traces
+        write_traces(cache, trace_rows(eps, results, tok, args.bootstrap), tokenizer_id=getattr(tok, "name_or_path", None))
+
+    current = None
+    try:
+        for item in ds:
+            ep, fi = int(item["episode_index"]), int(item["frame_index"])
+            if ep != current:  # episodes stream in order: the previous one is complete
+                if current is not None:
+                    finished.append(current)
+                current = ep
+                if len(finished) >= 20:
+                    save(finished)
+                    finished = []
+            if fi not in wanted.get(ep, {}):
+                continue
+            raw = {rename.get(k, k): (v[None] if torch.is_tensor(v) else [v]) for k, v in item.items()}
+            batch = pre(raw)
+            d = view(ep)
+            traces = candidates(d, fi)
+            gains = score(policy, batch, traces, tok, policy.config.cot_max_tokens)
+            best = 1 if args.bootstrap else int(np.argmax(gains))
+            keep = args.bootstrap or gains[best] > 0
+            results[ep].append({"segment": wanted[ep][fi], "frame": fi, "trace": traces[best] if keep else None,
+                                "gain": float(gains[best]), "all_gains": dict(zip(traces, map(float, gains), strict=True))})
+            print(json.dumps({"episode": ep, **results[ep][-1]}), flush=True)
+        if current is not None:  # the stream ended: the last episode is complete
+            finished.append(current)
+    finally:  # also on kill: write every completely scored episode (a partly scored one is redone next time)
+        if finished:
+            save(finished)
+
+
+def trace_rows(eps: list[int], results: dict[int, list], tok, bootstrap: bool) -> list[dict]:
     rows = []
-    for ep, eps_rows in results.items():
-        for r in sorted(eps_rows, key=lambda r: r["frame"]):
+    for ep in eps:
+        for r in sorted(results[ep], key=lambda r: r["frame"]):
             text = r["trace"] or ""
             rows.append({"episode": ep, "segment": r["segment"], "frame": r["frame"], "trace": text, "kept": r["trace"] is not None,
-                         "gain": r["gain"], "all_gains": json.dumps(r["all_gains"]), "bootstrap": bool(args.bootstrap),
+                         "gain": r["gain"], "all_gains": json.dumps(r["all_gains"]), "bootstrap": bool(bootstrap),
                          "token_ids": tok(text, add_special_tokens=False).input_ids if text else []})
-    write_traces(cache, rows, tokenizer_id=getattr(tok, "name_or_path", None))
+    return rows
 
 
 if __name__ == "__main__":

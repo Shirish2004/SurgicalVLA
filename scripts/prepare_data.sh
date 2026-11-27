@@ -41,7 +41,7 @@ STATE=$LOG/state
 mkdir -p "$STATE"
 hf() { pixi run -e dev hf "$@"; }
 note() { echo "== $(date '+%F %T') $*" | tee -a "$LOG/plan.log"; }
-alert() { bash scripts/notify.sh "$*"; }  # WhatsApp (scripts/notify.sh; silent no-op until configured)
+alert() { [ -f scripts/notify.sh ] && bash scripts/notify.sh "$*" || true; }  # optional local phone alerts (not in git)
 done_mark() { touch "$STATE/$1.done"; }
 is_done() { [ -f "$STATE/$1.done" ]; }
 

@@ -64,3 +64,7 @@ credentials*.json
 
 # Pseudo-label sidecar stores (regenerable; large)
 /pseudolabels/
+
+# Personal phone alerts / Telegram bridge (local only)
+scripts/notify.sh
+scripts/telegram_bridge.py

@@ -17,19 +17,6 @@ nvidia-smi && nproc                    # A100 80 GB, 12 CPUs
 Accept the SAM 3 licence at <https://huggingface.co/facebook/sam3> with the same account,
 because the weights are gated.
 
-Phone alerts (optional): `scripts/notify.sh` reports each finished or failed cache stage, Hub
-push and SFT run through a Telegram bot (or WhatsApp via CallMeBot). Setup per machine:
-1. In Telegram, message `@BotFather`, send `/newbot` and copy the token.
-2. Run `mkdir -p ~/.config/surgicalvla-notify && echo 'TELEGRAM_BOT_TOKEN=<token>' >> ~/.config/surgicalvla-notify/env && chmod 600 ~/.config/surgicalvla-notify/env`.
-3. Open your bot in Telegram and press Start.
-4. Run `bash scripts/notify.sh --setup-telegram`, which saves your chat id and sends a test message.
-
-Wrap any other command with `bash scripts/notify.sh --run "<label>" <command...>`.
-
-Two-way control (optional): `nohup python3 scripts/telegram_bridge.py > results/plan/telegram_bridge.log 2>&1 &`
-answers `/status`, `/gpu`, `/jobs` and `/log <name>` from your phone, and passes any other text to
-Claude Code (headless, in the project directory). It only obeys your own chat id.
-
 ## 1. Where the data lives
 
 ```

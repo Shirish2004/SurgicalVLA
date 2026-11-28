@@ -486,7 +486,7 @@ def main() -> None:
     e.add_argument("--checkpoint", required=True)
     e.add_argument("--revision")
     e.add_argument("--name")
-    e.add_argument("--out")
+    e.add_argument("--out", help="results/<benchmark>/<name> (default: results/<benchmark>/<checkpoint>)")
     e.add_argument("--seeds", nargs="+", type=int)
     e.add_argument("--suites", nargs="+")
     e.add_argument("--tasks", nargs="+")

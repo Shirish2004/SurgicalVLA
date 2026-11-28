@@ -240,6 +240,7 @@ class SmolVLAMoEModel(nn.Module):
                 num_phases=self.config.num_phases,
                 variant=variant,
                 seed=i,
+                routing_ablation=self.config.moe_routing_ablation,
             )
             layer.mlp = moe
             out.append(moe)
@@ -510,7 +511,9 @@ class SmolVLAMoEModel(nn.Module):
             object_token_mask=objects.token_mask,
             cot_ids=cot_ids,
             cot_mask=cot_mask,
-            latent_tokens=None if self.latent is None else self.latent.tokens(state.shape[0]),
+            latent_tokens=None
+            if self.latent is None or self.config.latent_cot_ablation == "drop"
+            else self.latent.tokens(state.shape[0]),
         )
         latent_slice = self._last_latent_slice
         att_2d = make_att_2d_masks(pad, att)

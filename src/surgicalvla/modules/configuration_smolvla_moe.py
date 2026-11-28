@@ -39,6 +39,12 @@ class SmolVLAMoEConfig(SmolVLAConfig):
     obj_token_layout: str = "pooled"  # pooled: num_object_tokens shared slots; per_object: one token per object
     # evaluation-only probe of how much the policy uses the object tokens: zero | shuffle
     object_token_ablation: str = "none"
+    # evaluation-only probes of the MoE and the latent reasoning tokens (never set for training):
+    #   moe_routing_ablation: shared_only drops every routed expert (shared expert only);
+    #                         random replaces the router's top-k choice by a uniformly random one
+    #   latent_cot_ablation:  drop removes the latent reasoning tokens from the prefix
+    moe_routing_ablation: str = "none"
+    latent_cot_ablation: str = "none"
 
     # --- asynchronous System-2 chain of thought --------------------------
     use_cot: bool = True
@@ -125,6 +131,10 @@ class SmolVLAMoEConfig(SmolVLAConfig):
             raise ValueError(f"bad VLM LoRA settings: rank {self.vlm_lora_rank}, parts {self.vlm_lora_parts}")
         if self.object_token_ablation not in ("none", "zero", "shuffle"):
             raise ValueError(f"unknown object_token_ablation {self.object_token_ablation!r}")
+        if self.moe_routing_ablation not in ("none", "shared_only", "random"):
+            raise ValueError(f"unknown moe_routing_ablation {self.moe_routing_ablation!r}")
+        if self.latent_cot_ablation not in ("none", "drop"):
+            raise ValueError(f"unknown latent_cot_ablation {self.latent_cot_ablation!r}")
         if self.object_input != "none":
             self.obj_sam_feat_dim = self.aux_feat_dim
             self.obj_pose_dim = 8

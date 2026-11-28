@@ -794,3 +794,59 @@ def test_curriculum_counter_counts_optimizer_steps_not_forwards():
     SmolVLAMoEPolicy.on_optimizer_step(policy)
     SmolVLAMoEPolicy.on_optimizer_step(policy)
     assert int(model.train_steps) == 2
+
+
+# ---------------------------------------------------------------------------
+# evaluation-only probes (moe_routing_ablation, latent_cot_ablation)
+# ---------------------------------------------------------------------------
+
+
+def _live_moe(routing_ablation: str) -> PhaseConditionedMoEFFN:
+    torch.manual_seed(0)
+    moe = PhaseConditionedMoEFFN(MLP(H, 2 * H), H, H, H, num_experts=4, num_shared_experts=1, top_k=2,
+                                 routing_ablation=routing_ablation)
+    with torch.no_grad():
+        moe.router.weight.normal_(0, 0.5)
+        for e in moe.routed_experts:
+            e.down_proj.weight.normal_(0, 0.1)  # routed experts live (not the zero-output init)
+    return moe.eval()
+
+
+def test_moe_shared_only_ablation_is_the_shared_expert():
+    moe = _live_moe("shared_only")
+    x = torch.randn(2, 5, H)
+    with torch.no_grad():
+        torch.testing.assert_close(moe(x), moe.shared_experts[0](x))
+
+
+def test_moe_random_ablation_keeps_k_but_changes_choice():
+    ref, rnd = _live_moe("none"), _live_moe("random")
+    rnd.load_state_dict(ref.state_dict())
+    x = torch.randn(4, 16, H)
+    with torch.no_grad():
+        out_ref, out_rnd = ref(x), rnd(x)
+    assert out_rnd.shape == x.shape and torch.isfinite(out_rnd).all()
+    assert not torch.allclose(out_ref, out_rnd)
+    torch.testing.assert_close(rnd.last_usage.sum(), torch.tensor(1.0))
+
+
+def test_routing_ablation_reaches_every_moe_layer_and_rejects_unknown():
+    model = make_model(make_config(moe_routing_ablation="shared_only"))
+    assert model._moe_layers and all(m.routing_ablation == "shared_only" for m in model._moe_layers)
+    with pytest.raises(ValueError):
+        make_config(moe_routing_ablation="bogus")
+    with pytest.raises(ValueError):
+        make_config(latent_cot_ablation="bogus")
+
+
+def test_latent_cot_drop_removes_the_latent_tokens():
+    cfg = make_config(latent_cot=True)
+    model = make_model(cfg).eval()
+    inputs = to_model_inputs(model, make_batch(cfg))
+    with torch.no_grad():
+        model(**inputs)
+    assert model._last_latent_slice is not None
+    model.config.latent_cot_ablation = "drop"
+    with torch.no_grad():
+        out = model(**inputs)
+    assert model._last_latent_slice is None and torch.isfinite(out["loss"])

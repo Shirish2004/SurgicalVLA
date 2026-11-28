@@ -117,8 +117,12 @@ class PhaseConditionedMoEFFN(nn.Module):
         zero_routed_output: bool = True,
         variant: str = "upcycled",
         seed: int = 0,
+        routing_ablation: str = "none",
     ):
         super().__init__()
+        if routing_ablation not in ("none", "shared_only", "random"):
+            raise ValueError(f"unknown routing_ablation {routing_ablation!r}")
+        self.routing_ablation = routing_ablation  # evaluation-only probe (SmolVLAMoEConfig.moe_routing_ablation)
         if num_experts < 1 or num_shared_experts < 1:
             raise ValueError("num_experts and num_shared_experts must be >= 1")
         if not 1 <= top_k <= num_experts:
@@ -186,12 +190,18 @@ class PhaseConditionedMoEFFN(nn.Module):
 
         probs = torch.softmax(logits.float(), dim=-1)
         top_probs, top_idx = probs.topk(self.top_k, dim=-1)
+        if self.routing_ablation == "random":  # same k and weight rule, random experts
+            top_idx = torch.rand_like(probs).topk(self.top_k, dim=-1).indices
+            top_probs = probs.gather(-1, top_idx)
         top_weights = top_probs / top_probs.sum(dim=-1, keepdim=True).clamp_min(1e-9)
 
         shared = sum(expert(x) for expert in self.shared_experts)
         if self.variant == "upcycled":  # each shared expert is a full copy: average them
             shared = shared / self.num_shared_experts
-        routed = self._dispatch(x, top_weights, top_idx)
+        if self.routing_ablation == "shared_only":
+            routed = torch.zeros_like(x)
+        else:
+            routed = self._dispatch(x, top_weights, top_idx)
         out = shared + routed
 
         # Switch-Transformer load balancing: E * sum_i f_i * p_i.

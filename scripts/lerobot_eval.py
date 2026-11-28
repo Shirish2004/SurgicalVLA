@@ -12,11 +12,14 @@ LeRobot's. Two additions, neither of which changes an episode:
 * The length of every episode (first done step + 1) is written to
   ``<output_dir>/episode_lengths.json`` in the order LeRobot runs them (tasks in order,
   rollouts in order, environments in order), next to ``eval_info.json``.
+* ``SVLA_EVAL_INSTRUMENT=1``: read-only perception / latency / MoE / CoT-probe metrics and
+  annotated videos in ``<output_dir>/instrument`` (``surgicalvla.utils.eval_instrument``).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 from pathlib import Path
@@ -30,10 +33,16 @@ _lengths: list[int] = []
 _lock = threading.Lock()
 _rollout = _le.rollout
 _make_policy = _le.make_policy
+_instrument = None
 
 
 def _recording_rollout(*args, **kwargs):
     out = _rollout(*args, **kwargs)
+    if _instrument is not None:
+        try:
+            _instrument.end_rollout(out)
+        except Exception as e:  # instrumentation must never break the evaluation
+            print(f"[instrument] end_rollout failed: {type(e).__name__}: {e}", flush=True)
     done = out["done"].to(int)
     first = torch.argmax(done, dim=1)
     ended = done.any(dim=1)
@@ -51,6 +60,13 @@ def _make_policy_with_perception(*args, **kwargs):
 
         policy.attach_live_perception(ObjectInputExtractor(ObjectInputConfig(num_candidates=cfg.obj_candidates, num_grippers=cfg.obj_grippers),
                                                            device=str(cfg.device or "cuda")))
+        out = _output_dir(sys.argv[1:])
+        if os.environ.get("SVLA_EVAL_INSTRUMENT") == "1" and out is not None:
+            from surgicalvla.utils.eval_instrument import EvalInstrument
+
+            global _instrument
+            _instrument = EvalInstrument(out)
+            _instrument.attach(policy)
     return policy
 
 

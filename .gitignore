@@ -26,6 +26,7 @@ outputs/
 *.pt
 *.pth
 *.zip
+docs/audit.md
 
 # Third-party checkouts (scripts/setup_libero.sh clones LIBERO here)
 LIBERO/
@@ -47,7 +48,9 @@ runs/
 *.safetensors
 *.ckpt
 *.mp4
-
+*.mf
+AGENTS.md
+ARCH.md
 # Datasets / caches
 /data/
 /datasets/

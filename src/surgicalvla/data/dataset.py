@@ -18,6 +18,17 @@ from lerobot.utils.constants import ACTION
 from torch.utils.data import Dataset
 
 
+def channel_first(shape: tuple, names=None) -> tuple:
+    """Image shape as policies declare it, (C, H, W). LeRobot datasets store (H, W, C) with
+    names [height, width, channel(s)]; lerobot-eval checks the leading dim is the channel count."""
+    if len(shape) != 3:
+        return shape
+    last = str(names[-1]).lower() if names and len(names) == 3 else ""
+    if last.startswith("channel") or (not names and shape[-1] in (1, 3, 4) and shape[0] not in (1, 3, 4)):
+        return (shape[2], shape[0], shape[1])
+    return shape
+
+
 def infer_features(meta: LeRobotDatasetMetadata) -> dict[str, PolicyFeature]:
     """Raw-dataset-key -> PolicyFeature, inferred from dataset metadata (visual/state/action only)."""
     features = {}
@@ -25,6 +36,7 @@ def infer_features(meta: LeRobotDatasetMetadata) -> dict[str, PolicyFeature]:
         shape = tuple(spec["shape"])
         if key.startswith("observation.image") or spec.get("dtype") in ("image", "video"):
             ftype = FeatureType.VISUAL
+            shape = channel_first(shape, spec.get("names"))
         elif key == ACTION:
             ftype = FeatureType.ACTION
         elif key.startswith("observation."):

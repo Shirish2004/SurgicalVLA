@@ -87,6 +87,7 @@ def run(args) -> None:
                 cmd.append(f"--env.server.endpoint={args.server_endpoint}")
             if args.task_ids:
                 cmd.append(f"--env.task_ids={json.dumps(args.task_ids)}")
+            cmd += [f"--policy.{kv}" for kv in args.policy_arg or []]
             print("[run]", " ".join(cmd), flush=True)
             t0 = time.time()
             out.mkdir(parents=True, exist_ok=True)
@@ -207,6 +208,8 @@ def main() -> None:
     r.add_argument("--env-type", default="libero", choices=["libero", "libero_plus"])
     r.add_argument("--server-endpoint", help="drive a Docker-served simulator (lerobot-env-server), e.g. tcp/127.0.0.1:7448")
     r.add_argument("--device", default="cuda")
+    r.add_argument("--policy-arg", action="append", metavar="KEY=VALUE",
+                   help="policy config override passed as --policy.KEY=VALUE (repeatable), e.g. object_token_ablation=zero")
     r.add_argument("--out", default="results/baselines/smolvla_libero")
     r.add_argument("--overwrite", action="store_true")
     a = sub.add_parser("aggregate")

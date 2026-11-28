@@ -24,6 +24,12 @@ STEPS=${STEPS:-25000}
 RUN=${RUN:-outputs/libero_spatial/full_25k/seed0}
 OUT=${OUT:-results/libero/spatial_full25k_eval}
 SEEDS=${SEEDS:-"1000 2000"}
+RES=${RES:-256}                  # the policy's training resolution (lerobot/libero frames are 256x256)
+# Before starting, also wait for these processes (e.g. an Isaac Sim job) to exit and for the
+# GPU to have MIN_FREE_MB free for GPU_QUIET_MIN consecutive minutes.
+WAIT_PIDS=${WAIT_PIDS:-}
+MIN_FREE_MB=${MIN_FREE_MB:-12000}
+GPU_QUIET_MIN=${GPU_QUIET_MIN:-3}
 BASELINE=results/baselines/smolvla_libero
 N=~/.local/bin/notify
 note() { echo "== $(date '+%F %T') $1"; [ -x "$N" ] && "$N" "$1" || true; }
@@ -31,6 +37,15 @@ PY="pixi run --manifest-path $PWD/pixi.toml -e sim-eval python"
 CKPT="$RUN/checkpoints/step_$STEPS"
 
 while kill -0 "$TRAIN_PID" 2>/dev/null; do sleep 60; done
+for pid in $WAIT_PIDS; do
+    while kill -0 "$pid" 2>/dev/null; do sleep 60; done
+done
+quiet=0
+while [ "$quiet" -lt "$GPU_QUIET_MIN" ]; do
+    free=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)
+    if [ "${free:-0}" -ge "$MIN_FREE_MB" ]; then quiet=$((quiet + 1)); else quiet=0; fi
+    [ "$quiet" -lt "$GPU_QUIET_MIN" ] && sleep 60
+done
 if [ ! -e "$CKPT/config.json" ]; then
     note "❌ Spatial eval: training ended but $CKPT has no policy; eval not started"
     exit 1
@@ -54,7 +69,7 @@ evaluate() {
     local t0=$SECONDS
     if ! SVLA_EVAL_INSTRUMENT=$instr SVLA_COT_PROBE_EVERY=$probe SVLA_ANNOTATE_TASKS=$([ "$name" = full ] && echo 10 || echo 0) \
         $PY scripts/eval_libero_baseline.py run --policy "$CKPT" --revision "" --suites libero_spatial \
-            --seeds $SEEDS --out "$OUT/$name" "${args[@]}"; then
+            --resolution "$RES" --seeds $SEEDS --out "$OUT/$name" "${args[@]}"; then
         note "❌ Spatial eval $name failed: see $OUT/$name/libero_spatial/seed*/stdout.log"
         return 1
     fi
@@ -65,11 +80,11 @@ evaluate() {
 # 1. smoke test: 1 task x 2 episodes, instrumented, every probe once
 SMOKE=$OUT/_smoke
 rm -rf "$SMOKE"
-note "🧪 Training done; smoke-testing the eval on $CKPT"
+note "🧪 GPU free; smoke-testing the eval on $CKPT"
 for spec in "none" "moe_routing_ablation=shared_only" "latent_cot_ablation=drop" "object_token_ablation=zero"; do
     extra=(); [ "$spec" != none ] && extra=(--policy-arg "$spec")
     if ! SVLA_EVAL_INSTRUMENT=1 $PY scripts/eval_libero_baseline.py run --policy "$CKPT" --revision "" \
-            --suites libero_spatial --seeds 1000 --n-episodes 2 --batch-size 2 --task-ids 0 \
+            --suites libero_spatial --resolution "$RES" --seeds 1000 --n-episodes 2 --batch-size 2 --task-ids 0 \
             --out "$SMOKE/${spec//=/_}" "${extra[@]}"; then
         note "❌ Smoke test failed for '$spec' (see $SMOKE); eval not started"
         exit 1

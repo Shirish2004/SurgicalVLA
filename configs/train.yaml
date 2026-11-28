@@ -10,7 +10,7 @@ project:
   save_every: 2000                   # save model checkpoint every N steps
 
 run:
-  steps: 50000                       # total training steps
+  steps: 20000                       # total training steps
   batch_size: 24
   device: "cuda"                     # "cuda" or "cpu"
   ckpt_dir: "./checkpoints"
